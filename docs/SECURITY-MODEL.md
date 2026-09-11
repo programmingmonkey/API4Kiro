@@ -38,6 +38,7 @@ flowchart LR
   subgraph SRC[外部只读数据源 · HTTPS]
     GH[GitHub Releases API 与资产域]
     MD[models.dev 模型目录]
+    CXC[Codex 订阅口径窗口目录]
   end
 
   subgraph DISK[本机持久化 · 同一操作系统用户可读]
@@ -80,7 +81,7 @@ flowchart LR
 - **边界 1：Kiro 进程 ↔ 本扩展。** 两者在同一台机器上，且因 `package.json` 声明 `extensionDependencies: ["kiro.kiroAgent"]`，被 Kiro 放进**同一个扩展宿主进程**（见 ARCHITECTURE.md「系统架构」）。Kiro 的对话请求以明文 HTTP 经回环地址到达 KRS（`endpoints.ts` 把 `codewhisperer.config.*Endpoints` 指向 `http://127.0.0.1:<port>`）。这条边界上对普通请求**没有鉴权**：任何能连上回环端口的本机非浏览器进程都能向 KRS / CPS 发请求，也能冒充 KRS 接收 Kiro 的请求（只要它先占到端口）。4.13.53 起加了两道门：`requestGuard.ts` 在两个服务入口第一行拒绝浏览器与非回环来源（`Host` 非回环、带 `Origin`、`Sec-Fetch-Site` 非 `none`、TCP 远端非回环 → 403，无 CORS 头）；多窗口让位与身份探测经同用户共享的随机密钥做 HMAC-SHA256 校验（`identityKey.ts` / `proxyIdentity.ts`）。
 - **边界 2：本扩展 ↔ 本机持久化。** 设置文件、钥匙串、`globalState`、`globalStorage`、Kiro 安装目录都由操作系统按当前用户保护。本扩展不在其上再加一层加密。
 - **边界 3：本扩展 ↔ 上游。** 由用户在渠道里填写 `baseUrl` 或选择厂商登录。协议由 `baseUrl` 决定：`https://` 走 Node 默认证书校验的 TLS，`http://` 明文（`upstream.ts`）。上游收到的是完整对话、工具定义与工具结果，加上对应渠道的凭据。OAuth 类渠道的 token 只发往厂商规格宿主（`providers.ts` `allowedOAuthHosts`）；Key 类渠道发往用户填写的任何地址。
-- **边界 4：本扩展 ↔ GitHub。** 更新检查读 `api.github.com` 的最新 Release；自更新（4.13.54 起）把 Release 里的 `api2kiro-dual-<版本>.vsix` 下载到 `globalStorage/updates/`，校验后交给 Kiro 工作台安装（`updateChecker.ts`）。请求不带任何凭据；下载只走 `github.com` / `api.github.com` / `objects.githubusercontent.com` / `release-assets.githubusercontent.com` 的 https，30x 跳转每跳都过白名单。安装的是**可执行的扩展代码**，信任根是 GitHub 与维护者账号，见第 3 节第 6 条。
+- **边界 4：本扩展 ↔ GitHub。** 更新检查读 `api.github.com` 的最新 Release；自更新（4.13.54 起）把 Release 里的 `api2kiro-dual-<版本>.vsix` 下载到 `globalStorage/updates/`，校验后交给 Kiro 工作台安装（`updateChecker.ts`）。请求不带任何凭据；下载只走 `github.com` / `api.github.com` / `objects.githubusercontent.com` / `release-assets.githubusercontent.com` 的 https，30x 跳转每跳都过白名单。此外 Codex 订阅口径窗口目录经 `raw.githubusercontent.com` 只读拉取（4.13.58 起，不带任何凭据）。安装的是**可执行的扩展代码**，信任根是 GitHub 与维护者账号，见第 3 节第 6 条。
 
 ## 2. 资产清单
 
@@ -92,7 +93,7 @@ flowchart LR
 | Kiro 自己的运行时 bearer（Kiro 发给「CodeWhisperer 端点」的 `authorization` 头） | 随 Kiro 的每个请求进入 KRS，仅在内存 | 同上：任何占到 19810 端口的本机进程都会收到它 | **不转发**：Kiro 官方直通时丢弃入站 `authorization`、换成所选凭证的 token；其它协议只构造新的请求头。只记忆 `user-agent` 等非敏感头以便模拟 IDE 客户端；不落盘、不写日志 | `krsServer.ts` `kiroHeaders` / `upstreamHeaders`；`oauth/vendors.ts` `rememberKiroClientHeaders` |
 | 多窗口共享身份密钥 | `globalStorage/identity.key`，32 字节随机值，`open(…, "wx")` 独占创建，类 Unix 下 0600 | 同用户进程 | 让位请求签名 `x-a2k-yield-auth` = HMAC-SHA256(key, `yield\|role\|nonce\|yieldTo`)，身份应答签名 `sig` = HMAC-SHA256(key, `ident\|role\|nonce\|version`)；值与路径不进日志与响应 | `identityKey.ts` `ensureKey` / `initIdentityKey`；`proxyIdentity.ts` `yieldSignature` / `identitySignature` / `verifyYield` |
 | 本地用量账本 | `globalState` 键 `usage.ledger.v1`：逐请求明细（最多 2000 条 / 30 天）与小时桶 | 同用户进程（VS Code 的状态数据库） | 用量页的趋势、Sankey、汇总。记录 provider / 模型 / token 数 / 延迟 / 状态码 / 错误文本 / conversationId / 上下文分项**数字**；不含对话正文 | `usageStore.ts` `UsageRecord` |
-| 端点备份与其它 `globalState` 项 | `globalState`：被清掉的工作区级 `codewhisperer.config.*` 原值（`endpointStash.*`）、本扩展写入过的用户级端点值（`endpointWritten.*`，4.13.53 起）、提示词库、学到的纯文本模型名单、models.dev 缓存 | 同用户进程 | 关闭代理时把工作区原值写回，并只删除本扩展自己写入的用户级值；提示词作为 system 注入每个请求 | `endpoints.ts` `stashValue` / `popStashed` / `overrideEndpoint` / `restoreEndpoint`；`promptStore.ts` |
+| 端点备份与其它 `globalState` 项 | `globalState`：被清掉的工作区级 `codewhisperer.config.*` 原值（`endpointStash.*`）、本扩展写入过的用户级端点值（`endpointWritten.*`，4.13.53 起）、提示词库、学到的纯文本模型名单、models.dev 缓存与 Codex 目录缓存 | 同用户进程 | 关闭代理时把工作区原值写回，并只删除本扩展自己写入的用户级值；提示词作为 system 注入每个请求 | `endpoints.ts` `stashValue` / `popStashed` / `overrideEndpoint` / `restoreEndpoint`；`promptStore.ts` |
 | 已下载的更新包 | `globalStorage/updates/api2kiro-dual-<版本>.vsix`（下载中为 `.part`） | 同用户进程 | 字节数 = `Content-Length` = Release 资产 size、≤ 50 MB、`PK` 头、包内 `extension/package.json` 的 name 须为 `api2kiro-dual` 且 version 须等于 tag 版本，全部通过后才调 `workbench.extensions.installExtension`；安装成功后只保留刚装的那一个 | `updateChecker.ts` `downloadFile` / `verifyVsix` / `installLatestFromGitHub` / `cleanupUpdatesDir` |
 | 调试日志 | VS Code 输出通道「API4Kiro」，由宿主写入其日志目录 | 同用户进程；你把日志贴到哪里，哪里就能读 | `debug` 关闭时不记录请求体（上游非 2xx 的错误响应前 300 字符仍以 error 级记录）。开启后记录发往上游的**完整请求体**、原始 SSE 片段与用量，单行超过 64 KiB 截断；对字段名像 key / token / authorization / secret / code / signature 的值以及 `sk-` / `AIza` / `xai-` / `GOCSPX-` / `ya29.` / JWT / Bearer 等形态打码，未知形态不识别；开启时输出通道先打一条提醒 | `log.ts` `redactText` / `redactReplacer` / `SENSITIVE_KEY_RE` / `KEY_SHAPES` / `MAX_LINE_BYTES`；`krsServer.ts` 各处 `debug("upstream request", …)` |
 | Kiro 安装目录的三个前端文件 | `<Kiro>/extensions/kiro.kiro-agent/…/style.css`、`…/assets/mermaid-*.js`、`…/dist/extension.js` | 对 Kiro 安装目录有写权限的进程 | 追加 / 替换带 `a2k` 标记的片段：分组样式、选择器渲染、Context Usage 弹层、把 kiro-agent 的模型配置 provider 挂到 `globalThis.__kiroModelConfigProvider` 供「通道 A」刷新；4.13.53 起选择器渲染补丁只对 description 以 `__A2K_GRP__|` / `__A2K_MDL__|` 开头的条目生效，三处写入先算计划再按顺序提交、任一失败回滚 | `selectorStyle.ts` `syncGroupHeaderStyle` / `commitPlans` / `writeAtomic` / `carryMarker` |
@@ -108,7 +109,7 @@ flowchart LR
    - 接管 Kiro 端点时，先把工作区级与工作区文件夹级的 `codewhisperer.config.*Endpoints` 原值备份到 `globalState` 再清掉，只在用户级写入指向本地代理的值，避免仓库里的设置把 Kiro 的请求引向别处（`endpoints.ts` `overrideEndpoint`）；面板写设置只写用户级，写后回读校验，被工作区遮蔽时如实报错并退到 `globalState` 兜底（`config.ts` `updateSetting`）。
    - 4.13.53 起代理开关与含凭据 / 端点的设置项（`enabled`、`providers`、`apiKey`、`baseUrl`、`officialBaseUrl`、`officialApiKey`、`openaiBaseUrl`、`openaiApiKey`、`usagePath`）声明 `scope: machine`，工作台解析工作区 `.vscode/settings.json` 时直接跳过它们；`providers` 读取再经 `inspect()` 只取用户级值（`providers.ts` `getProviders`）。`capabilities.untrustedWorkspaces.supported: false`——受限模式（未信任）工作区下扩展不激活。
    - 4.13.53 起 OAuth token 与厂商宿主绑定（`providers.ts` `allowedOAuthHosts`）：即便某个渠道的 `baseUrl` 被改写，token 也不会发往厂商之外的地址。
-5. **外部只读数据源是不可信但低风险的输入。** models.dev 目录只影响模型能力标注与档位显示；CC Switch 数据库只在用户主动点导入时被只读解析。它们都不携带本扩展的凭据。
+5. **外部只读数据源是不可信但低风险的输入。** models.dev 目录只影响模型能力标注与档位显示；Codex 订阅口径窗口目录（`raw.githubusercontent.com` 上的 `router-for-me/models` 的 `models.json` 与 `codex_client_models.json` 两份，冲突取保守下限）只影响 Codex 系模型的上下文窗口；CC Switch 数据库只在用户主动点导入时被只读解析。它们都不携带本扩展的凭据。
 6. **GitHub 与维护者账号是自更新的信任根。** 「检查更新」安装的是 Release 资产里的扩展包，校验只保证「下载完整、包结构合法、name / version 与 tag 一致」，**不做代码签名验证**（vsix 无签名）。能替换 Release 资产的人（维护者账号被盗、GitHub 被攻陷）能让点击「检查更新」的用户装上任意代码。不接受这一前提的用户可以不点「检查更新」，从 Release 页手动下载并核对说明里的 sha256 后安装。
 
 ## 4. 已知的攻击面与当前状态
@@ -139,7 +140,7 @@ flowchart LR
 - **不对 Kiro 升级后的补丁兼容性做事先保证。** 补丁按 Kiro 编译产物的结构匹配，Kiro 大改前端时会整体跳过（回到原生外观）而不是半套生效；但「是否跳过、何时修复」只能在新版 Kiro 出现后确认。
 - **调试日志开着时，请求正文会随输出通道落盘。** 脱敏只覆盖已知形态。
 - **不提供多用户隔离。** 共享机器上，其它本地用户的进程与你的进程在回环端口面前是等价的。
-- **不承诺外部数据源的可用性与真实性。** models.dev 或 GitHub API 不可达时相应功能静默降级。
+- **不承诺外部数据源的可用性与真实性。** models.dev、Codex 订阅口径窗口目录或 GitHub API 不可达时相应功能静默降级（窗口标注退回既有回退链，不影响请求可用性）。
 
 ## 6. 给用户的部署要点
 
@@ -168,4 +169,4 @@ flowchart LR
 
 相关文档：[SECURITY.md](../SECURITY.md) · [README](../README.md) · [架构概览](ARCHITECTURE.md) · [配置项参考](CONFIGURATION.md) · [参与贡献](../CONTRIBUTING.md) · [图标许可](../assets/ICON-LICENSE.md)
 
-最后更新：2026-09-10（对应 4.13.57：公开 Release 不再内嵌 Antigravity client secret）
+最后更新：2026-09-11（对应 4.13.58：新增 Codex 订阅口径窗口目录）

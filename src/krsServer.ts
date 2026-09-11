@@ -20,6 +20,7 @@ import { GeminiStreamConverter } from "./geminiStream";
 import { getSelectedEffort, getSelectedMode } from "./effort";
 import { isIntentClassifierRequest, buildIntentClassifierResponse } from "./intentClassifier";
 import { requestUpstream, readBody } from "./upstream";
+import { formatUpstreamError, upstreamErrorReason } from "./upstreamError";
 import { PortHolder, OwnershipListener } from "./portBinder";
 import {
   Protocol,
@@ -1207,7 +1208,7 @@ export class KrsProxyServer {
         }
         writeEvent(res, {
           assistantResponseEvent: {
-            content: `❌ 上游返回 ${upstream.statusCode}：\n\n${errText.slice(0, 800)}${hint ? `\n\n💡 ${hint}` : ""}`,
+            content: `❌ 上游返回 ${upstream.statusCode}：\n\n${upstreamErrorReason(errText)}${hint ? `\n\n💡 ${hint}` : ""}`,
             modelId,
           },
         });
@@ -1217,7 +1218,7 @@ export class KrsProxyServer {
           info(`upstream ${upstream.statusCode} looks like context overflow → ValidationException/${ex.payload.reason} for Kiro auto-compaction`);
           res.write(encodeException(ex.exceptionType, ex.payload));
         } else {
-          res.write(encodeException("InternalServerException", { message: `Upstream ${upstream.statusCode}` }));
+          res.write(encodeException("InternalServerException", { message: formatUpstreamError(upstream.statusCode, errText) }));
         }
         res.end();
         return;
@@ -1282,7 +1283,7 @@ export class KrsProxyServer {
         hint = `已尝试 ${triedCreds.size} 把凭证均失败。` + (hint ? " " + hint : "");
       }
       writeEvent(res, {
-        assistantResponseEvent: { content: `❌ 上游在流中返回错误：${seText.slice(0, 800)}${hint ? `\n\n💡 ${hint}` : ""}`, modelId },
+        assistantResponseEvent: { content: `❌ 上游在流中返回错误：${upstreamErrorReason(seText)}${hint ? `\n\n💡 ${hint}` : ""}`, modelId },
       });
       writeEvent(res, stopReasonEvent("END_TURN"));
       if (seOverflow) {
@@ -1290,7 +1291,7 @@ export class KrsProxyServer {
         info(`upstream stream error looks like context overflow → ValidationException/${ex.payload.reason} for Kiro auto-compaction`);
         res.write(encodeException(ex.exceptionType, ex.payload));
       } else {
-        res.write(encodeException("InternalServerException", { message: "Upstream stream error" }));
+        res.write(encodeException("InternalServerException", { message: formatUpstreamError(seStatus, seText) }));
       }
       res.end();
       return;

@@ -20,6 +20,7 @@ import { applyOverrides, restoreAll, initEndpoints } from "./endpoints";
 import { SidebarProvider } from "./sidebar";
 import { clearLearned, initImagePolicy, learnedTextOnlyModels } from "./imagePolicy";
 import { initModelCatalog } from "./modelCatalog";
+import { initCodexCatalog } from "./codexCatalog";
 import { flush as flushUsage, initUsageStore } from "./usageStore";
 import { initPromptStore } from "./promptStore";
 import { flushTokens, initTokenStore } from "./oauth/tokenStore";
@@ -47,6 +48,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   initImagePolicy(context);
   // 模型能力目录（models.dev）：后台异步拉取，不阻塞激活。
   initModelCatalog(context);
+  initCodexCatalog(context);
   // 本地用量账本（用量页数据源）。
   initUsageStore(context);
   context.subscriptions.push({ dispose: () => void flushUsage() });

@@ -342,13 +342,16 @@ const codex: VendorSpec = {
   signupUrl: "https://chatgpt.com/#pricing",
   latencyPath: "/models?client_version=0.146.0",
   models: [
-    { id: "gpt-5.5", name: "GPT-5.5", reasoning: true, image: true, contextWindow: 400000 },
+    // 窗口按 Codex 客户端元数据（codex_client_models.json 的 context_window）写死，不用 models.dev：
+    // 目录登记的是平台 API 口径（1050000），订阅通道实际小得多，照抄会让 Kiro 的上下文条偏乐观。
+    { id: "gpt-5.5", name: "GPT-5.5", reasoning: true, image: true, contextWindow: 272000 },
     { id: "gpt-5.4", name: "GPT-5.4", reasoning: true, image: true, contextWindow: 400000 },
     { id: "gpt-5.4-mini", name: "GPT-5.4 mini", reasoning: true, image: true, contextWindow: 400000 },
-    { id: "gpt-5.3-codex-spark", name: "GPT-5.3 Codex Spark", reasoning: true, contextWindow: 400000 },
-    { id: "gpt-5.6-sol", name: "GPT-5.6 Sol", reasoning: true, image: true },
-    { id: "gpt-5.6-terra", name: "GPT-5.6 Terra", reasoning: true, image: true },
-    { id: "gpt-5.6-luna", name: "GPT-5.6 Luna", reasoning: true, image: true },
+    { id: "gpt-5.3-codex-spark", name: "GPT-5.3 Codex Spark", reasoning: true, contextWindow: 128000 },
+    { id: "gpt-5.6-sol", name: "GPT-5.6 Sol", reasoning: true, image: true, contextWindow: 272000 },
+    { id: "gpt-5.6-terra", name: "GPT-5.6 Terra", reasoning: true, image: true, contextWindow: 272000 },
+    { id: "gpt-5.6-luna", name: "GPT-5.6 Luna", reasoning: true, image: true, contextWindow: 272000 },
+    { id: "gpt-6-astra", name: "GPT-6 Astra", reasoning: true, image: true, contextWindow: 272000 },
   ],
   // 套餐 → 可用模型（对齐 CPA models.json 的 codex-free / codex-team / codex-plus|pro）。
   // 用不该用的会被 400 "not supported when using Codex with a ChatGPT account"。未知套餐给全部。
@@ -359,7 +362,7 @@ const codex: VendorSpec = {
       return only(["gpt-5.5", "gpt-5.4-mini", "gpt-5.6-terra", "gpt-5.6-luna"]);
     }
     if (plan === "team" || plan === "business" || plan === "enterprise" || plan === "edu") {
-      return only(["gpt-5.5", "gpt-5.4", "gpt-5.4-mini", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"]);
+      return only(["gpt-5.5", "gpt-5.4", "gpt-5.4-mini", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-6-astra"]);
     }
     return codex.models;
   },

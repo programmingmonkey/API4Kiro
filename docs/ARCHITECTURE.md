@@ -70,7 +70,7 @@ flowchart LR
 | `cpsServer.ts` | 模型列表广播（把推理 / 图片能力与生效上下文窗口编码进模型 description，供选择器徽章、弹层与 Ctx 下拉读取）、测活、用量查询 | providers, modelStore, usageStore, contextWindow |
 | `providers.ts` / `credentialPool.ts` | 注册表、路由、凭证调度 | oauth/tokenStore, config |
 | `providerProbe.ts` | 对草稿渠道测延迟 / 拉模型 / 测活，不写注册表 | upstream, providers |
-| `modelCatalog.ts` / `modelStore.ts` | models.dev 目录缓存；聚合列表与路由表；学到的模型名单 | globalState, upstream |
+| `modelCatalog.ts` / `codexCatalog.ts` / `modelStore.ts` | models.dev 与 Codex 订阅口径目录缓存；聚合列表与路由表；学到的模型名单 | globalState, upstream |
 | `oauth/` | 六家厂商登录（授权码 + PKCE / 设备码）、token 刷新与存储 | tokenStore（SecretStorage）, openBrowser |
 | `ccSwitchImport.ts` / `sqliteReader.ts` | 只读解析 `~/.cc-switch/cc-switch.db` 导入渠道 | fs |
 | `usageStore.ts` / `turnLedger.ts` / `contextParser.ts` | 账本、整轮累计、上下文分项 | cwTypes, promptStore |

@@ -237,6 +237,7 @@ mindmap
     模型
       modelStore.ts 聚合与路由表
       modelCatalog.ts models.dev 能力目录
+      codexCatalog.ts Codex 订阅口径窗口目录
       contextWindow.ts 挡位解析
       contextOverflow.ts 爆窗口判定
     用量
@@ -310,6 +311,7 @@ API4Kiro/
 │   │
 │   ├── modelStore.ts           模型聚合与「模型 ID → provider」路由表；学到的模型名单
 │   ├── modelCatalog.ts         models.dev 模型能力目录缓存（图片 / 思考形态 / 上下文窗口）
+│   ├── codexCatalog.ts         Codex 订阅口径窗口目录（models.json 两来源取保守下限）
 │   ├── contextWindow.ts        每模型上下文挡位：四来源解析、候选梯子、CPS description 往返
 │   ├── contextOverflow.ts      上游超长判定；回 Kiro ValidationException 触发被动压缩
 │   │
@@ -359,7 +361,7 @@ API4Kiro/
 - **网络**：Node `http` / `https` / `net` 实现本地反代与多窗口端口协商 · 自实现 AWS eventstream 二进制编解码 · SSE 解析
 - **协议**：Anthropic Messages · OpenAI Chat Completions / Responses · Gemini generateContent · Kiro CodeWhisperer
 - **认证**：OAuth 2.0 授权码 + PKCE / 设备码；Kimi、OpenAI（Codex）、xAI、Google（Antigravity）、Anthropic、Kiro 六家
-- **数据**：零依赖 SQLite 页解析器（CC Switch 导入）· `globalState` 持久化账本与模型名单 · [models.dev](https://models.dev) 公共模型目录（可缺席）
+- **数据**：零依赖 SQLite 页解析器（CC Switch 导入）· `globalState` 持久化账本与模型名单 · [models.dev](https://models.dev) 公共模型目录（可缺席）· Codex 订阅口径窗口目录（[router-for-me/models](https://github.com/router-for-me/models)，可缺席）
 - **工程**：GitHub Actions CI（Node 22，构建 + 打包 + 产物上传，tag 自动发 Release）· Conventional Commits
 
 ## 文档

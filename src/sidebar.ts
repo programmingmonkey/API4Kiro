@@ -6418,7 +6418,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     return k >= 1000 ? f(k / 1000, 'M') : f(k, 'K');
   }
   // 来源标签；default 只在三来源都缺时出现（有任何来源就不会落到默认），所以直接写成「未知」
-  const CTX_SRC = { override: '你的覆盖', upstream: '渠道 /models 字段', vendor: '内置厂商表', catalog: 'models.dev 目录', default: '未知，按默认 200K' };
+  const CTX_SRC = { override: '你的覆盖', upstream: '渠道 /models 字段', vendor: '内置厂商表', codex: 'Codex 订阅口径目录', catalog: 'models.dev 目录', default: '未知，按默认 200K' };
   // 每行「上下文」下拉（4.13.55）：数据来自扩展 ctxWindows 消息（与 CPS 广播同一套算法）。候选 = 标准梯子 ≤ 已知最大窗口 ∪ 各来源
   // 精确值；当前值 = 用户覆盖 ?? 解析值。Kiro 按这里报出的窗口算用量百分比与 80% / 95% 压缩阈值——上游拒收长输入的模型选小一档即可。
   // 选项分两组：「自动 · 来源」（解析值，选它 = 清除覆盖、回到跟随目录）与「手动覆盖」（其余挡位）——显示文案只有数字，窄面板里

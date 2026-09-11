@@ -22,6 +22,7 @@ import {
   splitQualifiedModelId,
 } from "./providers";
 import { ModelCapability, lookupCapability, normalizeModelId } from "./modelCatalog";
+import { codexSubscriptionWindow } from "./codexCatalog";
 import { getContextWindowOverride } from "./config";
 import { ContextWindowInfo, resolveContextWindow } from "./contextWindow";
 import { VendorModel, getVendor } from "./oauth/vendors";
@@ -746,8 +747,14 @@ export function contextWindowRows(): ContextWindowRow[] {
   const kiroIds = kiroModelIds(groups.map((g) => ({ id: g.baseId, providerId: g.providerId })));
   return groups.map((g, i) => {
     const cap = lookupCapability(g.baseId);
+    const codexWin = codexSubscriptionWindow(g.baseId);
     const info = resolveContextWindow(
-      { upstream: g.upstreamContextWindow, vendor: g.vendorContextWindow, catalog: cap?.contextWindow },
+      {
+        upstream: g.upstreamContextWindow,
+        vendor: g.vendorContextWindow,
+        codex: codexWin,
+        catalog: codexWin === undefined ? cap?.contextWindow : undefined,
+      },
       getContextWindowOverride(kiroIds[i])
     );
     return { kiroId: kiroIds[i], baseId: g.baseId, providerId: g.providerId, info };
@@ -770,6 +777,9 @@ export function looksReasoningModel(modelId: string, providerId?: string): boole
   return (
     m.includes("gpt-5") ||
     m.includes("gpt5") ||
+    // GPT-6 及以后（gpt-6-astra / gpt-6.0 / gpt7…）。保留上面的 gpt-5 判断不动，这里只做加法，
+    // 免得收窄既有匹配面；gpt-4o 等仍然不在此列（走上面的 o1/o3/o4/o5 规则）。
+    /(^|[^a-z])gpt-?[6-9]/.test(m) ||
     m.includes("reasoner") ||
     m.includes("reasoning") ||
     m.includes("thinking") ||

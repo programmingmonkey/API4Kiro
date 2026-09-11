@@ -24,6 +24,7 @@ import type { ModelCapability } from "./modelCatalog";
 import { FORCED_THINKING_EFFORTS, isForcedThinkingModel } from "./thinkingPolicy";
 import { getContextWindowOverride } from "./config";
 import { ContextWindowInfo, formatContextTable, resolveContextWindow } from "./contextWindow";
+import { codexSubscriptionWindow } from "./codexCatalog";
 
 /**
  * models.dev 目录的 reasoning_options → Kiro 选择器要展示的档位列表。
@@ -193,10 +194,18 @@ export class CpsProxyServer {
       // 图片支持：用户覆盖 > 目录 > 保守认为支持（不误伤）。
       const imgDecided = resolveModelImage(g.baseId, g.providerId);
       const supportsImage = typeof imgDecided === "boolean" ? imgDecided : true;
-      // 上下文窗口：渠道字段 → 厂商目录 → models.dev（只认精确条目）→ 默认 200000；用户覆盖（键 = Kiro 里的模型 id）优先。
+      // 上下文窗口：渠道字段 → 厂商目录 → **Codex 订阅口径** → models.dev（只认精确条目）→ 默认 200000；用户覆盖（键 = Kiro 里的模型 id）优先。
       // Kiro 按 maxInputTokens 算百分比与 80% / 95% 阈值——这里报多少，Kiro 就在多少处压缩。
+      // Codex 系模型命中订阅口径时**不再传 catalog**：models.dev 对这条通道是平台 API 口径的数，
+      // 混进来会把 1050000 变成「已知最大窗口」，进而让选择器多出一个点不得的挡位。
+      const codexWin = codexSubscriptionWindow(g.baseId);
       const ctx = resolveContextWindow(
-        { upstream: g.upstreamContextWindow, vendor: g.vendorContextWindow, catalog: cap?.contextWindow },
+        {
+          upstream: g.upstreamContextWindow,
+          vendor: g.vendorContextWindow,
+          codex: codexWin,
+          catalog: codexWin === undefined ? cap?.contextWindow : undefined,
+        },
         getContextWindowOverride(kiroIds[gi])
       );
       ctxInfos.push(ctx);

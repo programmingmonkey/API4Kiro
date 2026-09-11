@@ -43,7 +43,7 @@ We aim to acknowledge reports within 7 days. Fixes ship with the next release an
 - 上游厂商的 API 与账号体系（Anthropic、OpenAI、Google、xAI、Moonshot、Kiro 官方等）
 - Kiro IDE 本体及其内置的 kiro-agent 扩展（请报给 Kiro）
 - 用户自建或第三方运营的中转站 / 网关
-- 被本扩展只读引用的第三方数据源（models.dev 公共目录、CC Switch 数据库）
+- 被本扩展只读引用的第三方数据源（models.dev 公共目录、Codex 订阅口径窗口目录 `router-for-me/models`、CC Switch 数据库）
 
 关于「同一操作系统账户下的其它进程」：本扩展的威胁模型把它们视为可信（这是 VS Code 扩展模型本身的边界，见 [docs/SECURITY-MODEL.md](docs/SECURITY-MODEL.md) 第 3 节）。即便如此，若你发现可以**降低这一前提**的路径——例如无需该用户权限、可由网页 / 不可信工作区 / 远程方触发——请报告。此前多窗口让位协议对同机进程无鉴权的问题已在 4.13.53 修复（同用户共享密钥 HMAC，见该文第 4 节第 1 行）。
 
@@ -66,4 +66,4 @@ We aim to acknowledge reports within 7 days. Fixes ship with the next release an
 
 相关文档：[README](README.md) · [架构概览](docs/ARCHITECTURE.md) · [配置项参考](docs/CONFIGURATION.md) · [参与贡献](CONTRIBUTING.md) · [威胁模型](docs/SECURITY-MODEL.md)
 
-最后更新：2026-09-10（对应 4.13.57：公开 Release 不再内嵌 Antigravity client secret）
+最后更新：2026-09-11（对应 4.13.58：新增 Codex 订阅口径窗口目录）

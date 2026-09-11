@@ -23,13 +23,19 @@ export const DEFAULT_CONTEXT_WINDOW = 200000;
 export const MIN_CONTEXT_OVERRIDE = 4096;
 export const MAX_CONTEXT_OVERRIDE = 10_000_000;
 
-export type ContextWindowSource = "override" | "upstream" | "vendor" | "catalog" | "default";
+export type ContextWindowSource = "override" | "upstream" | "vendor" | "codex" | "catalog" | "default";
 
 export interface ContextWindowSources {
   /** 渠道 `/models` 条目自带的窗口字段（`context_window` / `max_input_tokens` …），或 Kiro 官方 ListAvailableModels 的 `tokenLimits.maxInputTokens`。 */
   upstream?: number;
   /** OAuth 厂商内置目录（`src/oauth/vendors.ts`）。 */
   vendor?: number;
+  /**
+   * Codex **订阅通道口径**（`src/codexCatalog.ts`）：ChatGPT 订阅的 Codex 后端窗口，通常小于 models.dev
+   * 登记的平台 API 口径。仅在模型属于 Codex 家族时给出；给出时调用方**不再传 `catalog`**，
+   * 因为对这条通道而言 models.dev 的值是另一条产品线的数（见该文件头注释）。
+   */
+  codex?: number;
   /** models.dev 目录里该模型自己的条目。 */
   catalog?: number;
 }
@@ -67,7 +73,7 @@ export function normalizeContextOverride(v: unknown): number | undefined {
   return n;
 }
 
-/** 解析值：沿用 4.13.54 的优先级（渠道字段 → 厂商目录 → models.dev → 默认）。 */
+/** 解析值：渠道字段 → 厂商目录 → **Codex 订阅口径** → models.dev → 默认。 */
 export function resolveBaseContextWindow(src: ContextWindowSources): { value: number; source: Exclude<ContextWindowSource, "override"> } {
   const up = posInt(src.upstream);
   if (up) {
@@ -76,6 +82,12 @@ export function resolveBaseContextWindow(src: ContextWindowSources): { value: nu
   const vendor = posInt(src.vendor);
   if (vendor) {
     return { value: vendor, source: "vendor" };
+  }
+  // Codex 订阅口径排在 models.dev 之前：同一个模型 id 在平台 API 与订阅通道下窗口不同，
+  // 而中转渠道（如 CLIProxyAPI）既不声明字段、也不需要走厂商表，只有这里能给出订阅口径的正确答案。
+  const codex = posInt(src.codex);
+  if (codex) {
+    return { value: codex, source: "codex" };
   }
   const cat = posInt(src.catalog);
   if (cat) {
@@ -105,7 +117,7 @@ export function contextCandidates(max: number, exact: number[] = []): number[] {
 }
 
 export function resolveContextWindow(src: ContextWindowSources, override?: unknown): ContextWindowInfo {
-  const values = [posInt(src.upstream), posInt(src.vendor), posInt(src.catalog)].filter((n): n is number => n !== undefined);
+  const values = [posInt(src.upstream), posInt(src.vendor), posInt(src.codex), posInt(src.catalog)].filter((n): n is number => n !== undefined);
   const known = values.length > 0;
   const max = known ? Math.max(...values) : DEFAULT_CONTEXT_WINDOW;
   const base = resolveBaseContextWindow(src);
