@@ -1,6 +1,7 @@
 .vscode/**
 _ref/**
 src/**
+.kiro/**
 node_modules/**
 **/*.ts
 **/*.map

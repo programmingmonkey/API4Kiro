@@ -13,3 +13,6 @@ antigravity.secret
 *.log
 .DS_Store
 Thumbs.db
+
+# Spec 工具的会话指针（瞬态，不进仓库）
+.kiro/specs/_active
