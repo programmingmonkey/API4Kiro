@@ -47,6 +47,63 @@ function jsDir(): string {
   return path.join(path.dirname(styleFile()), "assets");
 }
 
+/** kiro.kiro-agent 的 packages 目录。 */
+function packagesDir(): string {
+  return path.join(vscode.env.appRoot, "extensions", "kiro.kiro-agent", "packages");
+}
+
+/** 模型选择器的类名字面量：压缩器一个字符都不动字面量，用它认「这个 chunk 里有没有模型选择器」。 */
+const SELECTOR_CHUNK_MARK = "chat-input-popup-option";
+
+/** 一个承载模型选择器的 chunk 及其所属 package 自己的样式表。 */
+type SelectorPackage = { pkg: string; chunk: string; style: string };
+
+/**
+ * 承载模型选择器的**全部** package。
+ *
+ * Kiro 1.1.14 起聊天界面被拆到 `kiro-ui-session-details`：同一个 chunk（同名 base
+ * `mermaid-GHXKKRXX`、不同 hash）在各 package 下各有一份，而且**各自独立压缩**
+ * （实测 agent-chat 1 870 816 B / session-details 2 218 700 B，压缩名不同）。
+ * 只处理 `kiro-ui-agent-chat` 会漏掉用户真正看到的那个视图：卡片补丁与 CSS 都打在 agent-chat，
+ * 界面却由 session-details 的工厂 chunk 渲染，于是每行模型名下面直接显示 CPS 的
+ * `__A2K_MDL__|…` 微格式（2026-09-15 实机截图：整张列表看起来就是一片乱码）。
+ *
+ * 判据用**内容**而不是文件名：两份 chunk 同名不同 hash，只有内容能区分；而
+ * `chat-input-popup-option` 是类名字面量，压缩前后逐字不变。
+ *
+ * 目录不可读（非 Kiro 宿主）时返回空数组，由调用方按「靶点不命中」处理。
+ */
+async function selectorPackages(): Promise<SelectorPackage[]> {
+  const out: SelectorPackage[] = [];
+  let pkgs: string[];
+  try {
+    pkgs = await fs.promises.readdir(packagesDir());
+  } catch {
+    return out;
+  }
+  for (const pkg of pkgs) {
+    const dist = path.join(packagesDir(), pkg, "dist");
+    const assets = path.join(dist, "assets");
+    let names: string[];
+    try {
+      names = await fs.promises.readdir(assets);
+    } catch {
+      continue;
+    }
+    for (const f of names) {
+      if (!f.startsWith("mermaid-") || !f.endsWith(".js")) continue;
+      const chunk = path.join(assets, f);
+      try {
+        if (!(await fs.promises.readFile(chunk, "utf8")).includes(SELECTOR_CHUNK_MARK)) continue;
+      } catch {
+        continue;
+      }
+      out.push({ pkg, chunk, style: path.join(dist, "style.css") });
+    }
+  }
+  return out;
+}
+
 const CARD_CSS = `${START}
 /* API4Kiro：模型选择器精致卡片化分组与自由拉伸缩放（整体缩小一小圈，支持手动调整宽高）
    只作用于 mermaid 补丁打上 a2k-model-selector-menu 的那一个菜单；Agent / 上下文拾取器等
@@ -541,6 +598,12 @@ const PATCHED_MENU_CODE =
 const ORIG_REF_PATTERN =
   'ref:a(O=>{m.current[x]=O},"ref")';
 
+/**
+ * 选中项 ref 的搜索窗口（字符）。该写法是通用形态，bundle 里出现多处（上下文拾取器 / 智能体列表
+ * 都用同形回调），因此只允许在「选项行起点之前这一段」里唯一命中。实测 1.1.14 的间距约 40 字符。
+ */
+const REF_SCOPE_CHARS = 2000;
+
 /** 选中项居中滚动（4.13.53 起带「标记门」）：只对 description 以 `__A2K_MDL__|` 开头的选中行做一次居中；出厂列表不滚动。 */
 const PATCHED_REF_CODE =
   'ref:a(O=>{m.current[x]=O;if(O&&C&&typeof k==="string"&&k.startsWith("__A2K_MDL__|")&&!O.dataset.a2kScrolled){O.dataset.a2kScrolled="1";setTimeout(()=>{O.scrollIntoView({block:"center",behavior:"instant"});},10);}},"ref")';
@@ -554,7 +617,7 @@ const PATCHED_TRIGGER_CODE =
 /**
  * Context Usage 弹层（Kiro `ContextUsagePopover`）出厂整函数的**规范模板**：以 Kiro 1.0.411 的压缩名书写
  * （函数名 Bde、警告文案函数 Pde、函数尾部局部变量 z）。4.13.44 起不再逐字比对：Kiro 1.0.437 重新压缩后
- * 只有这三个名字变了（Bde→qde、Pde→Ude、z→j），其余 2361 字符逐字相同。定位用 templateRegex() 把三个规范名
+ * 只有这三个名字变了（Bde→qde、Pde→Ude、z→j），其余字符逐字相同。定位用结构匹配（scanMasked）把压缩名
  * 换成捕获组 / 反向引用做结构匹配（见 findPopoverFactory）；还原不再依赖本串，而是回填补丁时随身携带的
  * 块注释标记 `a2k-orig:<base64 出厂原文>`（见 carryMarker / restoreSelectorScript 第 5 步）。本串仍是
  * 4.13.36–4.13.43 写进 1.0.411 文件的历史变体的还原依据（restoreMarkedSpan 旧路径），也是测试 / 检查器的合成基准。
@@ -585,7 +648,7 @@ const ORIG_POPOVER_PATTERN =
  * 两条分支 hook 顺序一致）。`tests/selector` native-fallback 用例以出厂函数为 oracle 做树比较。
  */
 const PATCHED_POPOVER_CODE =
-  'function Bde(t){const e=re.c(30),[a2kCfg]=l0(),{livePercentage:n,conversationPct:r,mcpPct:s,steeringPct:i,hasBreakdown:o,warning:l,showWarning:u,style:c,floatingProps:d,summarizationThreshold:f,a2kUsage:A}=t,g=Math.ceil(n),y=n>=f-5;const[CW,A2K]=(()=>{try{const q=(a2kCfg||[]).find(z=>z&&z.category==="model");if(!q||q.type!=="select")return[0,false];const F=(q.options||[]).flatMap(v=>v&&Array.isArray(v.options)?v.options:[v]);const M=F.some(v=>typeof v?.description==="string"&&v.description.startsWith("__A2K_"));const z=F.find(v=>v&&v.value===q.currentValue);const p=typeof z?.description==="string"?z.description.split("|"):null;const w=p&&p[0]==="__A2K_MDL__"?Number(p[3]):0;return[w>0?w:0,M]}catch(_e){return[0,false]}})();const x=u&&l!=null&&b.jsxs("div",{className:"kiro-context-popover-warning",children:[b.jsx("div",{className:"kiro-context-popover-warning-header",children:b.jsx("span",{children:"High initial context usage"})}),b.jsx("div",{className:"kiro-context-popover-warning-message",children:Pde(l)})]});if(!A2K){const NH=Math.ceil(r),NP=Math.ceil(s),NM=Math.ceil(i);const NT=b.jsxs("div",{className:"kiro-context-popover-header",children:[b.jsx("span",{children:"Context Usage"}),b.jsx("span",{children:`${g}%`})]});const NR=b.jsxs("div",{className:"kiro-context-popover-breakdown-row",children:[b.jsx("span",{children:"Conversation"}),b.jsx("span",{children:`${NH}%`})]});const NO=o&&b.jsxs(b.Fragment,{children:[b.jsxs("div",{className:"kiro-context-popover-breakdown-row","data-high":l?.mcpTools||void 0,children:[b.jsx("span",{children:"MCP tools"}),b.jsx("span",{children:`${NP}%`})]}),b.jsxs("div",{className:"kiro-context-popover-breakdown-row","data-high":l?.steering||void 0,children:[b.jsx("span",{children:"Steering files"}),b.jsx("span",{children:`${NM}%`})]})]});const NL=b.jsxs("div",{className:"kiro-context-popover-breakdown",children:[NR,NO]});const NI=y&&b.jsx("div",{className:"kiro-context-popover-hint",children:`Auto-summarization at ${f}%`});const NB=b.jsxs("div",{className:"kiro-context-popover-content",children:[NT,NL,NI]});return b.jsxs("div",{className:"kiro-context-popover",style:c,role:"tooltip",...d,children:[x,NB]})}const K=v=>{if(v>=1e6){const q=(v/1e6).toFixed(1);return(q.endsWith(".0")?q.slice(0,-2):q)+"M"}if(v>=1e3){const q=(v/1e3).toFixed(1);return(q.endsWith(".0")?q.slice(0,-2):q)+"K"}return String(Math.round(v))};const V=A&&A.breakdown,W=V&&V.tools||{},D=[["prompts","Your prompts",V&&V.yourPrompts],["responses","Kiro responses",V&&V.kiroResponses],["files","Session files",V&&V.sessionFiles],["builtin","Built-in tools",W.builtin],["mcp","MCP tools",W.mcp],["steering","Steering files",V&&V.contextFiles]].filter(q=>q[2]&&typeof q[2].percent=="number"&&typeof q[2].tokens=="number");const J=D.length>0,Q=J?D.map(q=>({k:q[0],n:q[1],p:q[2].percent,v:q[2].tokens,h:q[0]==="mcp"?l?.mcpTools:q[0]==="steering"?l?.steering:void 0})):[{k:"conv",n:"Conversation",p:r,v:0,h:void 0}].concat(o?[{k:"mcp",n:"MCP tools",p:s,v:0,h:l?.mcpTools},{k:"steering",n:"Steering files",p:i,v:0,h:l?.steering}]:[]);const G=J?Q.reduce((q,w)=>q+w.v,0):0;const T=b.jsxs(b.Fragment,{children:[b.jsx("div",{className:"a2k-cu-head",children:b.jsx("span",{className:"a2k-cu-title",children:"Context Usage"})}),b.jsxs("div",{className:"a2k-cu-sub",children:[b.jsx("span",{className:"a2k-cu-pct",children:`${g}% Full`}),CW>0?b.jsx("span",{className:"a2k-cu-tokens",title:"Total = real usage reported by the upstream (percentage x context window). Per-category counts below are a rough client-side estimate by Kiro and may not add up to the total.",children:`~${K(Math.round(n/100*CW))} / ${K(CW)} tokens`}):J&&b.jsx("span",{className:"a2k-cu-tokens",title:"Token counts are a rough client-side estimate by Kiro; the percentage comes from the real token usage reported by the upstream.",children:`~${K(G)} tokens est.`})]}),b.jsx("div",{className:"a2k-cu-bar",children:Q.map(q=>b.jsx("div",{className:"a2k-cu-seg a2k-cu-c-"+q.k,style:{width:`${Math.max(0,Math.min(100,q.p))}%`}},q.k))})]});const L=b.jsx("div",{className:"kiro-context-popover-breakdown a2k-cu-rows",children:Q.map(q=>b.jsxs("div",{className:"kiro-context-popover-breakdown-row a2k-cu-row","data-high":q.h||void 0,children:[b.jsxs("span",{className:"a2k-cu-left",children:[b.jsx("span",{className:"a2k-cu-sw a2k-cu-c-"+q.k}),b.jsx("span",{children:q.n})]}),b.jsx("span",{className:"a2k-cu-val",children:J?K(q.v):`${Math.ceil(q.p)}%`})]},q.k))});const I=y&&b.jsx("div",{className:"kiro-context-popover-hint",children:`Auto-summarization at ${f}%`});const B=b.jsxs("div",{className:"kiro-context-popover-content",children:[T,L,I]});return b.jsxs("div",{className:"kiro-context-popover a2k-cu",style:c,role:"tooltip",...d,children:[x,B]})}a(Bde,"ContextUsagePopover");';
+  'function Bde(t){const e=re.c(30),[a2kCfg]=l0(),{livePercentage:n,conversationPct:r,mcpPct:s,steeringPct:i,hasBreakdown:o,warning:l,showWarning:u,style:c,floatingProps:d,summarizationThreshold:f,a2kUsage:A}=t,g=Math.ceil(n),y=n>=f-5;const[CW,A2K]=(()=>{try{const q=(a2kCfg||[]).find(z=>z&&z.category==="model");if(!q||q.type!=="select")return[0,false];const F=(q.options||[]).flatMap(v=>v&&Array.isArray(v.options)?v.options:[v]);const M=F.some(v=>typeof v?.description==="string"&&v.description.startsWith("__A2K_"));const z=F.find(v=>v&&v.value===q.currentValue);const p=typeof z?.description==="string"?z.description.split("|"):null;const v0=p&&p[0]==="__A2K_MDL__"?Number(p[3]):0;return[v0>0?v0:0,M]}catch(_e){return[0,false]}})();const x=u&&l!=null&&b.jsxs("div",{className:"kiro-context-popover-warning",children:[b.jsx("div",{className:"kiro-context-popover-warning-header",children:b.jsx("span",{children:"High initial context usage"})}),b.jsx("div",{className:"kiro-context-popover-warning-message",children:Pde(l)})]});if(!A2K){const NH=Math.ceil(r),NP=Math.ceil(s),NM=Math.ceil(i);const NT=b.jsxs("div",{className:"kiro-context-popover-header",children:[b.jsx("span",{children:"Context Usage"}),b.jsx("span",{children:`${g}%`})]});const NR=b.jsxs("div",{className:"kiro-context-popover-breakdown-row",children:[b.jsx("span",{children:"Conversation"}),b.jsx("span",{children:`${NH}%`})]});const NO=o&&b.jsxs(b.Fragment,{children:[b.jsxs("div",{className:"kiro-context-popover-breakdown-row","data-high":l?.mcpTools||void 0,children:[b.jsx("span",{children:"MCP tools"}),b.jsx("span",{children:`${NP}%`})]}),b.jsxs("div",{className:"kiro-context-popover-breakdown-row","data-high":l?.steering||void 0,children:[b.jsx("span",{children:"Steering files"}),b.jsx("span",{children:`${NM}%`})]})]});const NL=b.jsxs("div",{className:"kiro-context-popover-breakdown",children:[NR,NO]});const NI=y&&b.jsx("div",{className:"kiro-context-popover-hint",children:`Auto-summarization at ${f}%`});const NB=b.jsxs("div",{className:"kiro-context-popover-content",children:[NT,NL,NI]});return b.jsxs("div",{className:"kiro-context-popover",style:c,role:"tooltip",...d,children:[x,NB]})}const K=v=>{if(v>=1e6){const q=(v/1e6).toFixed(1);return(q.endsWith(".0")?q.slice(0,-2):q)+"M"}if(v>=1e3){const q=(v/1e3).toFixed(1);return(q.endsWith(".0")?q.slice(0,-2):q)+"K"}return String(Math.round(v))};const V=A&&A.breakdown,W=V&&V.tools||{},D=[["prompts","Your prompts",V&&V.yourPrompts],["responses","Kiro responses",V&&V.kiroResponses],["files","Session files",V&&V.sessionFiles],["builtin","Built-in tools",W.builtin],["mcp","MCP tools",W.mcp],["steering","Steering files",V&&V.contextFiles]].filter(q=>q[2]&&typeof q[2].percent=="number"&&typeof q[2].tokens=="number");const J=D.length>0,Q=J?D.map(q=>({k:q[0],n:q[1],p:q[2].percent,v:q[2].tokens,h:q[0]==="mcp"?l?.mcpTools:q[0]==="steering"?l?.steering:void 0})):[{k:"conv",n:"Conversation",p:r,v:0,h:void 0}].concat(o?[{k:"mcp",n:"MCP tools",p:s,v:0,h:l?.mcpTools},{k:"steering",n:"Steering files",p:i,v:0,h:l?.steering}]:[]);const G=J?Q.reduce((q,v0)=>q+v0.v,0):0;const T=b.jsxs(b.Fragment,{children:[b.jsx("div",{className:"a2k-cu-head",children:b.jsx("span",{className:"a2k-cu-title",children:"Context Usage"})}),b.jsxs("div",{className:"a2k-cu-sub",children:[b.jsx("span",{className:"a2k-cu-pct",children:`${g}% Full`}),CW>0?b.jsx("span",{className:"a2k-cu-tokens",title:"Total = real usage reported by the upstream (percentage x context window). Per-category counts below are a rough client-side estimate by Kiro and may not add up to the total.",children:`~${K(Math.round(n/100*CW))} / ${K(CW)} tokens`}):J&&b.jsx("span",{className:"a2k-cu-tokens",title:"Token counts are a rough client-side estimate by Kiro; the percentage comes from the real token usage reported by the upstream.",children:`~${K(G)} tokens est.`})]}),b.jsx("div",{className:"a2k-cu-bar",children:Q.map(q=>b.jsx("div",{className:"a2k-cu-seg a2k-cu-c-"+q.k,style:{width:`${Math.max(0,Math.min(100,q.p))}%`}},q.k))})]});const L=b.jsx("div",{className:"kiro-context-popover-breakdown a2k-cu-rows",children:Q.map(q=>b.jsxs("div",{className:"kiro-context-popover-breakdown-row a2k-cu-row","data-high":q.h||void 0,children:[b.jsxs("span",{className:"a2k-cu-left",children:[b.jsx("span",{className:"a2k-cu-sw a2k-cu-c-"+q.k}),b.jsx("span",{children:q.n})]}),b.jsx("span",{className:"a2k-cu-val",children:J?K(q.v):`${Math.ceil(q.p)}%`})]},q.k))});const v1=y&&b.jsx("div",{className:"kiro-context-popover-hint",children:`Auto-summarization at ${f}%`});const B=b.jsxs("div",{className:"kiro-context-popover-content",children:[T,L,v1]});return b.jsxs("div",{className:"kiro-context-popover a2k-cu",style:c,role:"tooltip",...d,children:[x,B]})}a(Bde,"ContextUsagePopover");';
 
 /**
  * ContextUsageIndicator（1.0.411 压缩名 Ude）里挂载弹层的一行：多传 store 原对象 `n`（contextUsage），其余不动。
@@ -654,49 +717,15 @@ function escapeRe(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\\/]/g, "\\$&");
 }
 
-type TemplateRegex = { re: RegExp; groups: string[] };
-const templateRegexCache = new Map<string, TemplateRegex>();
-
 /**
- * 把「以规范名书写的模板」编译成结构正则：模板整体正则转义，每个规范名按标识符边界替换——首次出现替换为
- * 捕获组 `([A-Za-z_$][\w$]*)`，之后出现替换为对应的反向引用（包在 (?:) 里，避免与后面的数字连成 \12）。
- * 返回的 groups 是捕获组顺序对应的规范名（按首次出现顺序，不一定等于 canonNames 顺序）。
+ * 按标识符边界把模板里的规范名换成实际名（同一趟替换，不会链式改写）。
+ *
+ * 实现委托给 renderIdentifierMap：它会把字符串 / 模板串 / 注释整段跳过，
+ * 绝不去动里面的字面量（早期版本用裸 IDENT_RE 替换，会把模板串里的反引号也换掉，
+ * 产出 `` v2{g}% `` 这种坏代码）。
  */
-function templateRegex(template: string, canonNames: string[]): TemplateRegex {
-  const key = canonNames.join(",") + "\u0000" + template;
-  const cached = templateRegexCache.get(key);
-  if (cached) return cached;
-  const groups: string[] = [];
-  let src = "";
-  let last = 0;
-  for (const m of template.matchAll(IDENT_RE)) {
-    const name = m[0];
-    const at = m.index as number;
-    src += escapeRe(template.slice(last, at));
-    if (canonNames.includes(name)) {
-      const g = groups.indexOf(name);
-      if (g >= 0) src += `(?:\\${g + 1})`;
-      else {
-        groups.push(name);
-        src += `(${IDENT_SRC})`;
-      }
-    } else {
-      src += escapeRe(name);
-    }
-    last = at + name.length;
-  }
-  src += escapeRe(template.slice(last));
-  const out = { re: new RegExp(src, "g"), groups };
-  templateRegexCache.set(key, out);
-  return out;
-}
-
-/** 按标识符边界把模板里的规范名换成实际名（同一趟替换，不会链式改写）。 */
 function renderTemplate(template: string, canonNames: string[], actualNames: string[]): string {
-  return template.replace(IDENT_RE, (name) => {
-    const i = canonNames.indexOf(name);
-    return i >= 0 ? actualNames[i] : name;
-  });
+  return renderIdentifierMap(template, canonNames, actualNames);
 }
 
 /**
@@ -707,6 +736,291 @@ function namesCollide(template: string, canonNames: string[], actualNames: strin
   const others = new Set<string>();
   for (const m of template.matchAll(IDENT_RE)) if (!canonNames.includes(m[0])) others.add(m[0]);
   return actualNames.some((n) => others.has(n));
+}
+
+// ============================================================================
+// 结构等价匹配（4.13.59；Kiro 1.1.14 整体重压缩事故）
+//
+// 压缩器唯一的自由度是给标识符改名：它不改结构、不改属性名、不改字符串字面量、不改数字。
+// 于是「模板」与「真机文本」若只差一次一致改名，就应当被认成同一段代码——
+// 判据是两者的 token 流同构：非标识符 token 逐一相同、标识符 token 一一对应。
+// 同构还顺带产出一份「规范名 → 真机名」映射，用 renderTemplate 把整份补丁模板渲染成真机形态。
+//
+// 定位不靠屏蔽串 indexOf：屏蔽后标识符全被吃掉，模板只剩零星标点与属性名，
+// 两段无关代码也可能长度相同且屏蔽后相同（实测 KaTeX 符号表里就能撞上选项行的屏蔽串）；
+// 而且屏蔽串比原文短，屏蔽串偏移**不能**用来切原文。改为拿模板里最长的非标识符 run
+// （属性名 / 字符串 / 标点，压缩器一个字符都不动）当锚逐字定位，再对窗口做 token 复验。
+//
+// 实测：Kiro 1.1.14 的选项行 / 菜单 / ref / 弹层函数 / 弹层调用处五份规范模板原始串全不中，
+// 走本模块后各命中恰好 1 次。
+// ============================================================================
+
+/** 标识符哨兵。U+0000 不可能出现在 JS 源码里；只用于诊断导出。 */
+const MASK_CHAR = "\u0000";
+
+/** 屏蔽掉全部标识符之后的文本。只用于人肉排查，判结构等价请用 verifyTokens。 */
+function mask(content: string): string {
+  return content.replace(IDENT_RE, MASK_CHAR);
+}
+
+/** 一段命中：start/end 是内容里的切片边界，text 是原样内容，map 是规范名 → 实际名。 */
+type MaskedSpan = { start: number; end: number; text: string; map: ReadonlyMap<string, string> };
+
+/** 代码 token：标识符，或「非标识符字面区」（字符串 / 模板串 / 注释 / 属性名 / 标点 / 数字）。 */
+type CodeToken = { isIdent: boolean; text: string; at: number };
+
+/**
+ * 把代码切成 token 流。
+ *
+ * **必须**先把字符串 / 模板串 / 注释整段跳过去，再在剩下的代码里切标识符：
+ * 否则模板串里的内容会被当成代码——补丁模板里的 `` `${g}%` `` 反引号会被 IDENT_RE
+ * 当成标识符选中（反引号不在 `[\w$]` 里，`(?<![\w$])` 放行），渲染时被替换成正则占位符，
+ * 产出 `` v2{g}% `` 这种直接语法错误。字符串与注释里的字面量在压缩前后逐字不变，
+ * 正好可以当成可靠的结构锚。
+ */
+function codeTokens(text: string): CodeToken[] {
+  const out: CodeToken[] = [];
+  const splitScan = /'(?:[^'\\]|\\.)*'|"(?:[^"\\]|\\.)*"|`(?:[^`\\]|\\.)*`|\/\/[^\n]*|\/\*[\s\S]*?\*\//g;
+  let last = 0;
+  const pushCode = (from: number, to: number) => {
+    let prev = from;
+    for (const m of text.slice(from, to).matchAll(IDENT_RE)) {
+      const at = from + (m.index as number);
+      if (at > prev) out.push({ isIdent: false, text: text.slice(prev, at), at: prev });
+      out.push({ isIdent: true, text: m[0], at });
+      prev = at + m[0].length;
+    }
+    if (prev < to) out.push({ isIdent: false, text: text.slice(prev, to), at: prev });
+  };
+  for (const m of text.matchAll(splitScan)) {
+    const at = m.index as number;
+    pushCode(last, at);
+    out.push({ isIdent: false, text: m[0], at });
+    last = at + m[0].length;
+  }
+  pushCode(last, text.length);
+  return out;
+}
+
+/**
+ * 结构等价复验 + 改名映射（一趟）。
+ *
+ * - 非标识符 token 必须逐一相同（属性名 / 字符串字面量 / 数字 / 标点都不可压缩，
+ *   这条几乎排除了全部误命中）；
+ * - 标识符 token 必须一一对应，且同一规范名必须始终对应同一实际名
+ *   （压缩器不会把同一个名字在不同位置压成两个名字）。
+ *
+ * 注意**不要**在这里检查「两个规范名映到同一实际名」：那是合法且常见的
+ * （1.1.14 的弹层里规范名 `z` 与 `H` 都映到实际的 `H`）。真正会出问题的是
+ * 「用真机名写模板」时的替换冲突，那由 renderMatched 的落地守卫负责。
+ *
+ * 返回 null 表示「不是一次一致改名」。
+ */
+function verifyTokens(canonical: string, actual: string): { map: Map<string, string> } | null {
+  const ct = codeTokens(canonical);
+  const at = codeTokens(actual);
+  if (ct.length !== at.length) return null;
+  const map = new Map<string, string>();
+  for (let i = 0; i < ct.length; i++) {
+    if (ct[i].isIdent !== at[i].isIdent) return null;
+    if (!ct[i].isIdent) {
+      if (ct[i].text !== at[i].text) return null;
+      continue;
+    }
+    const known = map.get(ct[i].text);
+    if (known !== undefined) {
+      if (known !== at[i].text) return null;
+      continue;
+    }
+    map.set(ct[i].text, at[i].text);
+  }
+  return { map };
+}
+
+/**
+ * 结构等价段的全部命中位置。
+ *
+ * 做法：把模板编译成「非标识符逐字、标识符各自独立通配」的正则，直接在原文上匹配。
+ *
+ * 为什么标识符必须**独立**通配、而不是同名反引用：模板是拿一个 Kiro 版本的压缩名写的，
+ * 真机是另一个版本，同一个规范名在真机里对应哪个实际名无从预设。反引用会强行要求「两处同名」，
+ * Kiro 一旦把两个同名变量压成不同名就整段失配——正是这次事故的形态。
+ * 名字统一从逐 token 的结构对齐里读，不再用捕获组。
+ *
+ * 为什么不用 identifier-masked 串 indexOf：屏蔽后标识符全被吃掉，模板只剩零星标点与属性名，
+ * 两段无关代码也可能长度相同且屏蔽后相同（实测 KaTeX 符号表里就能撞上选项行的屏蔽串）；
+ * 而且屏蔽串比原文短（1.1.14 的 mermaid bundle：1 843 793 → 981 285），
+ * 屏蔽串上的偏移**不能**直接用来切原文。逐字保留非标识符、用标识符边界夹住通配，
+ * 既保住全部可压缩信息，又让匹配偏移就是原文偏移。
+ *
+ * 命中后再逐 token 复验并产出改名映射（同一趟）：本函数是「宁可漏、不可错」的定位器，
+ * 命中数不为 1 时 matchMasked 报不可用（全有或全无）。
+ */
+function scanMasked(content: string, canonical: string): MaskedSpan[] {
+  const hits: MaskedSpan[] = [];
+  const seen = new Set<number>();
+  for (const m of content.matchAll(structuralRegex(canonical))) {
+    const start = m.index as number;
+    if (seen.has(start)) continue;
+    seen.add(start);
+    const text = m[0];
+    const verified = verifyTokens(canonical, text);
+    if (!verified) continue;
+    hits.push({ start, end: start + text.length, text, map: verified.map });
+  }
+  return hits;
+}
+
+/**
+ * 把模板编译成结构正则：非标识符片段逐字转义，每个标识符换成
+ * `(?<![\w$])[A-Za-z_$][\w$]*(?![\w$])`——各自独立，不共享捕获组、不互相反引用。
+ *
+ * 字符串 / 模板串 / 注释整段当成「非标识符片段」逐字转义，绝不在里面放通配：
+ * 模板串里的 `${g}%` 是代码，但两边逐字相同，不需要通配；而把反引号当标识符切
+ * 会直接产出坏正则。
+ */
+function structuralRegex(canonical: string): RegExp {
+  let src = "";
+  let last = 0;
+  for (const t of codeTokens(canonical)) {
+    src += escapeRe(canonical.slice(last, t.at));
+    src += t.isIdent ? `(?<![\\w$])${IDENT_SRC}(?![\\w$])` : escapeRe(t.text);
+    last = t.at + t.text.length;
+  }
+  src += escapeRe(canonical.slice(last));
+  return new RegExp(src, "g");
+}
+
+/** 恰好一处结构等价命中才返回，否则 null（「唯一命中」语义：多了就是有歧义，宁可不打）。 */
+function matchMasked(content: string, canonical: string): MaskedSpan | null {
+  const hits = scanMasked(content, canonical);
+  return hits.length === 1 ? hits[0] : null;
+}
+
+/**
+ * 用命中段的映射把模板渲染成真机形态；映射不可靠时返回 null（宁可不打）。
+ *
+ * 只把「在真机里确实改了名」的名字当规范名参与整串替换（映射回自身的名字不参与，
+ * 那些是模板自带的局部名或真机里恰好同名的外部名，替换它们只会引入遮蔽风险）。
+ *
+ * 落地守卫：新名字若已被模板自己声明为局部名，就放弃这一条改名——压缩名会撞车：
+ * 1.1.14 真机把选项行 name 变量压成 `w`，而补丁模板里也有自己的 `w` 一族，
+ * 无脑替换会把模板局部名一起改掉。规范名**本身**声明在模板里不算冲突
+ * （`function Bde(t){` 那种头部是补丁签名，本来就得换成真机名）。
+ * 这种情况顶多让某个靶点报不可用，绝不产出错代码（与 namesCollide 同一取向）。
+ */
+function renderMatched(template: string, canonical: string, span: MaskedSpan): string | null {
+  if (span.map.size === 0) return null;
+  const canonNames: string[] = [];
+  const actualNames: string[] = [];
+  const seen = new Set<string>();
+  for (const t of codeTokens(canonical)) {
+    if (!t.isIdent || seen.has(t.text)) continue;
+    seen.add(t.text);
+    const act = span.map.get(t.text);
+    if (act === undefined || act === t.text) continue;
+    if (isDeclaredName(template, act)) continue;
+    canonNames.push(t.text);
+    actualNames.push(act);
+  }
+  if (canonNames.length === 0) return null;
+  if (namesCollide(template, canonNames, actualNames)) return null;
+  return renderIdentifierMap(template, canonNames, actualNames);
+}
+
+/**
+ * 按标识符边界替换名字，但**跳过字符串 / 模板串 / 注释**——模板串里的 `${g}%` 是代码，
+ * 但反引号本身绝不能被当成标识符选中（否则会产出 `v2{g}%` 这种坏代码）。
+ * 同一趟替换，不会链式改写。
+ */
+function renderIdentifierMap(template: string, canonNames: string[], actualNames: string[]): string {
+  const map = new Map<string, string>();
+  for (let i = 0; i < canonNames.length; i++) map.set(canonNames[i], actualNames[i]);
+  let out = "";
+  for (const t of codeTokens(template)) {
+    if (t.isIdent) out += map.get(t.text) ?? t.text;
+    else out += t.text;
+  }
+  return out;
+}
+
+/**
+ * 该标识符在文本里是否已被就地声明为局部名（解构字段 / 函数参数 / 变量声明）。
+ *
+ * 判据取三种声明位置，但必须在**剥掉字符串字面量与注释**之后匹配：`"livePercentage"` 这类
+ * JSX 属性名混在引号里，直接跑正则会把它误判成「模板声明了这个名字」。
+ * 宁可保守（漏判只是少打一次补丁，绝不产出错代码）。
+ */
+function isDeclaredName(text: string, name: string): boolean {
+  const code = scrubText(text);
+  const n = escapeRe(name);
+  return (
+    new RegExp(`[{,]\\s*${n}\\s*:`).test(code) ||
+    // 形参列表必须能认出「这是形参表」，不能只看括号：
+    // 早期判据 `[(,]${n}[,)]` 会把再普通不过的**单参调用** `g(T)` 当成「模板声明了 T」。
+    // 1.1.14 的 kiro-ui-session-details chunk 上正好踩中：真机把规范名 `T` 有关的 `k` 压成 `T`，
+    // 于是这条改名被丢掉，`k` 随之落进 namesCollide 的 others，与另一条 `b→k` 撞车 →
+    // 整条选项行补丁被拒（实机现象：每行模型名下面直接显示 CPS 的 `__A2K_MDL__|…` 微格式）。
+    // 宁可漏判一次声明（漏判只是少打一次补丁），也不要把调用当声明（误判会拒掉整条补丁）。
+    new RegExp(`(?:[(,]\\s*${n}\\s*,|,\\s*${n}\\s*\\))`).test(code) ||
+    // 单形参的函数声明与箭头函数单独认：`function f(T)` / `(T)=>` / `T=>`。
+    new RegExp(`function[^()]*\\(\\s*${n}\\s*\\)`).test(code) ||
+    new RegExp(`\\(?\\s*${n}\\s*\\)?\\s*=>`).test(code) ||
+    new RegExp(`(?:const|let|var)\\s+${n}(?![\\w$])(?!\\s*:)`).test(code)
+  );
+}
+
+/**
+ * 把字符串字面量（含模板串）与注释的内容整体替换为空格，保留长度与引号 / 括号骨架。
+ * 只服务 isDeclaredName 的声明判定——不需要解析嵌套，只要长度不变、引号内外不串。
+ */
+function scrubText(src: string): string {
+  const out = src.split("");
+  let i = 0;
+  while (i < src.length) {
+    const c = src[i];
+    if (c === "'" || c === '"' || c === "`") {
+      const quote = c;
+      i++;
+      while (i < src.length) {
+        if (src[i] === "\\") {
+          out[i] = " ";
+          if (i + 1 < src.length) out[i + 1] = " ";
+          i += 2;
+          continue;
+        }
+        if (src[i] === quote) break;
+        out[i] = " ";
+        i++;
+      }
+      i++;
+      continue;
+    }
+    if (c === "/" && src[i + 1] === "/") {
+      while (i < src.length && src[i] !== "\n") {
+        out[i] = " ";
+        i++;
+      }
+      continue;
+    }
+    if (c === "/" && src[i + 1] === "*") {
+      out[i] = " ";
+      out[i + 1] = " ";
+      i += 2;
+      while (i < src.length && !(src[i] === "*" && src[i + 1] === "/")) {
+        out[i] = " ";
+        i++;
+      }
+      if (i < src.length) {
+        out[i] = " ";
+        out[i + 1] = " ";
+        i += 2;
+      }
+      continue;
+    }
+    i++;
+  }
+  return out.join("");
 }
 
 /**
@@ -721,36 +1035,52 @@ function resolveTaggedName(content: string, originalName: string): string | null
 
 /** ORIG_POPOVER_PATTERN 里随压缩器改名的三个名字：弹层函数、警告文案函数、函数尾部局部变量。 */
 const POPOVER_FACTORY_CANON = ["Bde", "Pde", "z"];
+/**
+ * 规范模板尾部挂着的 displayName 标签（函数体之外），定位函数体时要摘掉。
+ * 以 1.0.411 压缩名书写，所以整串出现在 ORIG_POPOVER_PATTERN 里。
+ */
+const POPOVER_TAG_SUFFIX = 'a(Bde,"ContextUsagePopover");';
+/** 弹层函数体的规范模板（= 规范串去掉尾部 displayName 标签），结构匹配以它为准。 */
+const POPOVER_FACTORY_BODY_CANON = ORIG_POPOVER_PATTERN.replace('a(Bde,"ContextUsagePopover");', "");
 /** PATCHED_POPOVER_CODE 里需要换成实际名的三个外部名：弹层函数、警告文案函数、useSessionConfig。 */
 const POPOVER_PATCH_CANON = ["Bde", "Pde", "l0"];
 /** PATCHED_QPE_PATTERN 里需要换成实际名的两个名字：setter、存储变量。 */
 const BACKEND_CANON = ["QPe", "Oue"];
 
-type PopoverFactoryHit = { start: number; end: number; text: string; names: { fn: string; warn: string; local: string } };
+type PopoverFactoryHit = {
+  start: number;
+  end: number;
+  text: string;
+  names: { fn: string; warn: string; local: string };
+  /** 函数体（不含尾部 displayName 标签）的命名映射，供 renderMatched 渲染补丁模板。 */
+  span: MaskedSpan;
+};
 type SpanHit = { start: number; end: number; text: string };
 type BackendHookHit = { start: number; end: number; fn: string; store: string };
 
-/** 用结构正则在文件里找出厂弹层函数；必须恰好一处，否则 null。 */
+/** 用结构匹配在文件里找出厂弹层函数；必须恰好一处，否则 null。 */
 function findPopoverFactory(content: string): PopoverFactoryHit | null {
-  const { re, groups } = templateRegex(ORIG_POPOVER_PATTERN, POPOVER_FACTORY_CANON);
-  const hits = [...content.matchAll(re)];
-  if (hits.length !== 1) return null;
-  const m = hits[0];
-  const byCanon = (c: string) => m[groups.indexOf(c) + 1];
-  return {
-    start: m.index as number,
-    end: (m.index as number) + m[0].length,
-    text: m[0],
-    names: { fn: byCanon("Bde"), warn: byCanon("Pde"), local: byCanon("z") },
+  // ORIG_POPOVER_PATTERN 的规范模板把「整函数 + 紧随其后的 displayName 标签」写成一串。
+  // 标签在函数体**之外**，而函数体本身与真机是 1:1 同名改写关系，所以搜索时把标签摘掉，
+  // 命中后再按真机的函数名把标签渲染回来（标签里的名字也要跟着换）。
+  const search = ORIG_POPOVER_PATTERN.replace(POPOVER_TAG_SUFFIX, "");
+  const span = matchMasked(content, search);
+  if (!span) return null;
+  const names = {
+    fn: span.map.get("Bde") ?? "Bde",
+    warn: span.map.get("Pde") ?? "Pde",
+    local: span.map.get("z") ?? "z",
   };
+  const suffix = renderTemplate(POPOVER_TAG_SUFFIX, ["Bde"], [names.fn]);
+  if (content.slice(span.start, span.end + suffix.length) !== span.text + suffix) return null;
+  return { start: span.start, end: span.end + suffix.length, text: span.text + suffix, names, span };
 }
 
-/** 弹层调用处（出厂形态，以实际函数名渲染后逐字查找）；必须恰好一处，否则 null。 */
+/** 弹层调用处（出厂形态，以实际函数名渲染后做结构匹配）；必须恰好一处，否则 null。 */
 function findPopoverCall(content: string, fn: string): SpanHit | null {
-  const text = renderTemplate(ORIG_POPOVER_CALL_PATTERN, ["Bde"], [fn]);
-  const i = content.indexOf(text);
-  if (i < 0 || content.indexOf(text, i + 1) >= 0) return null;
-  return { start: i, end: i + text.length, text };
+  const canonical = renderTemplate(ORIG_POPOVER_CALL_PATTERN, ["Bde"], [fn]);
+  const span = matchMasked(content, canonical);
+  return span ? { start: span.start, end: span.end, text: span.text } : null;
 }
 
 const BACKEND_HOOK_RE = /function ([A-Za-z_$][\w$]*)\(t\)\{([A-Za-z_$][\w$]*)=t\}(?=function [A-Za-z_$][\w$]*\(\)\{return \2\})/g;
@@ -1010,15 +1340,19 @@ function findEffortSelector(content: string): EffortSelectorHit | null {
   return { fn: m[2], tagger: m[1], tagEnd: (m.index as number) + m[0].length };
 }
 
-/** `<b>.jsx(<fn>,{disabled:<v>})` 恰好一处，捕获 jsx 运行时名与 disabled 变量名。 */
+/**
+ * EffortSelector 的调用处：结构正则 `<jsx>.jsx(<fn>,{disabled:<v>})`，捕获 jsx 运行时名与 disabled 变量名。
+ * JSX 自身的标识符（jsx 运行时 / disabled 变量）会被压缩，所以不能写成逐字串；
+ * 但标签 `a(<fn>,"EffortSelector")` 里的 `<fn>` 是已知的（由 findEffortSelector 读出）。
+ * 要求恰好一处命中——同一组件在别处复用会得到多个候选，这时宁可不打。
+ */
 function findEffortSelectorCall(content: string, fn: string): EffortCallHit | null {
-  const rendered = renderTemplate(CTX_CALL_ORIG_TEMPLATE, ["a0e"], [fn]);
-  const { re, groups } = templateRegex(rendered, ["b", "M"]);
+  const re = new RegExp(`(?<![\\w$])(${IDENT_SRC})\\.jsx\\(${escapeRe(fn)},\\{disabled:(${IDENT_SRC})\\}\\)`, "g");
   const hits = [...content.matchAll(re)];
   if (hits.length !== 1) return null;
   const m = hits[0];
-  const by = (c: string) => m[groups.indexOf(c) + 1];
-  return { start: m.index as number, end: (m.index as number) + m[0].length, text: m[0], jsx: by("b"), disabled: by("M") };
+  const start = m.index as number;
+  return { start, end: start + m[0].length, text: m[0], jsx: m[1], disabled: m[2] };
 }
 
 /**
@@ -1100,23 +1434,133 @@ const JS_OPTION_TAIL = ORIG_JS_PATTERN.slice(ORIG_JS_PATTERN.indexOf('b.jsxs("di
 const JS_OPTION_GATED_START = 'className:"chat-input-popup-option"+(typeof k==="string"&&k.startsWith("__A2K_GRP__|")';
 
 /**
+ * 结构式逆替换：在文本里结构匹配 `patched` 的形态（压缩名由真机渲染而来，所以必须结构匹配），
+ * 再用命中段的映射把它渲染回 `original` 的形态——补丁里的压缩名（如 ref 回调形参 `N`）
+ * 要跟着回到出厂形态（`O`），所以这里必须复用命中段的映射。
+ *
+ * 命中一处就地替换一处，直到不再命中；多份同样注入（历史重复追加）因此都能清掉。
+ */
+function restoreStructural(content: string, patched: string, original: string): string {
+  let out = content;
+  for (let guard = 0; guard < 8; guard++) {
+    const spans = scanMasked(out, patched);
+    if (spans.length === 0) break;
+    let changed = false;
+    for (const span of [...spans].sort((a, b) => b.start - a.start)) {
+      const fixed = renderMatched(original, patched, span);
+      if (fixed === null) continue;
+      out = out.slice(0, span.start) + fixed + out.slice(span.end);
+      changed = true;
+    }
+    if (!changed) break;
+  }
+  return out;
+}
+
+/**
+ * 打补丁时写入的弹层函数（含尾部标签、含随身携带标记）的**规范形态**。
+ * 标记是块注释、不含标识符，插在函数头之后；不把它算进来，函数体结构的
+ * 「非标识符 token 逐一相同」判据就过不了。补丁里的压缩名由真机渲染而来，所以还要
+ * 用同一次命中的映射把补丁模板渲染成真机形态，再拿它去匹配。
+ */
+/**
+ * 打补丁时写进文件的弹层函数（含尾部标签）的**逐字形态**。
+ *
+ * 关键点：这里的几个名字都必须用**真机的实际名**，不能混进规范名 `Bde`——否则还原时
+ * 结构匹配会把真机名再「映射」一次，把 `n2e` 又写回 `Bde`。
+ * 随身携带标记由调用方传进来（它内嵌的是出厂原文，与压缩名无关）。
+ */
+function patchedPopoverWritten(origText: string, fn: string, warn: string, useSessionConfig: string): string {
+  const body = renderTemplate(PATCHED_POPOVER_CODE, POPOVER_PATCH_CANON, [fn, warn, useSessionConfig]);
+  const head = `function ${fn}(t){`;
+  const withMarker = body.startsWith(head) ? head + carryMarker(origText) + body.slice(head.length) : body;
+  return withMarker + renderTemplate(POPOVER_TAG_SUFFIX, ["Bde"], [fn]);
+}
+
+/** 弹层函数（函数体 + 尾部 displayName 标签）的出厂形态（用给定函数名书写）。 */
+function popoverCanonicalWithTag(fn: string): string {
+  return POPOVER_FACTORY_BODY_CANON + renderTemplate(POPOVER_TAG_SUFFIX, ["Bde"], [fn]);
+}
+
+/**
+ * 弹层调用处的补丁特征：`<jsx>.jsx(<fn>,{…livePercentage:……},a2kUsage:<v>})`。
+ * 属性名与字面量都不可压缩，所以用结构正则（标识符通配）匹配即可，
+ * 不需要预设任何压缩名——这正是它能覆盖任意 Kiro 版本的原因。
+ * 前两组囊括除 `,a2kUsage:…` 之外的全部原文，替换时原样保留（真机压缩名不受影响）。
+ */
+const POPOVER_CALL_PATCHED_RE =
+  /((?<![A-Za-z_$][\w$]*\.)[A-Za-z_$][\w$]*\.jsx\([A-Za-z_$][\w$]*,\{(?=[^{}]*livePercentage:)[^{}]*?),a2kUsage:[A-Za-z_$][\w$]*\}\)/g;
+
+/** 去掉弹层调用处多传的 `a2kUsage` 参数（逐字，不碰任何压缩名）。 */
+function dropPopoverCallUsage(content: string): string {
+  return content.replace(POPOVER_CALL_PATCHED_RE, "$1})");
+}
+
+/** 还原弹层函数：结构匹配补丁形态的逐字串，再渲染回出厂形态。多份重复注入循环清掉。 */
+function restorePatchedPopover(content: string): string {
+  let out = content;
+  for (let guard = 0; guard < 8; guard++) {
+    let changed = false;
+    // 先从补丁函数体（不含尾部标签、不含携带标记）读出真机名
+    const body = matchMasked(out, PATCHED_POPOVER_CODE);
+    if (body) {
+      const fn = body.map.get("Bde") ?? "Bde";
+      const warn = body.map.get("Pde") ?? "Pde";
+      const use = body.map.get("l0") ?? "l0";
+      // 用真机名 + 实际携带标记拼出「写进文件的那一串」去定位函数
+      const writtenText = patchedPopoverWritten(body.text, fn, warn, use);
+      const written = matchMasked(out, writtenText);
+      if (written) {
+        const fixed = renderMatched(popoverCanonicalWithTag(fn), writtenText, written);
+        if (fixed !== null) {
+          out = out.slice(0, written.start) + fixed + out.slice(written.end);
+          changed = true;
+        }
+      }
+    }
+    // 调用处：结构正则去掉 a2kUsage，逐字保留真机名
+    const dropped = dropPopoverCallUsage(out);
+    if (dropped !== out) {
+      out = dropped;
+      changed = true;
+    }
+    if (!changed) break;
+  }
+  return out;
+}
+
+/**
  * 把 mermaid 里所有 API4Kiro 注入（无论哪个版本打的）还原为出厂。
- * 先做当前版本的精确逆替换，再用锚点兜底历史变体；通道 B（onMouseDown 触发器）无条件清除。
+ * 先做当前版本的结构逆替换，再用锚点兜底历史变体；通道 B（onMouseDown 触发器）无条件清除。
  */
 function restoreSelectorScript(content: string): string {
   let out = content;
+  // 选中项居中滚动 ref：该写法是通用形态（`ref:a(X=>{arr.current[i]=X},"ref")` 在 bundle 里出现多处），
+  // 必须限定在「选项行补丁之前这一段」窗口内。窗口基准要在**还原选项行之前**量取：
+  // 选项行换回出厂形态后长度变短，PATCHED_JS_CODE 的起点会前移。
+  const jsPatched = matchMasked(out, PATCHED_JS_CODE);
+  if (jsPatched) {
+    const refWinStart = Math.max(0, jsPatched.start - REF_SCOPE_CHARS);
+    const refPatched = matchMasked(out.slice(refWinStart, jsPatched.start), PATCHED_REF_CODE);
+    if (refPatched) {
+      const refFixed = renderMatched(ORIG_REF_PATTERN, PATCHED_REF_CODE, refPatched);
+      if (refFixed) {
+        const at = refWinStart + refPatched.start;
+        out = out.slice(0, at) + refFixed + out.slice(at + refPatched.text.length);
+      }
+    }
+  }
   // 1. 选项行：a) 4.13.53 起的标记门形态（className 表达式以 __A2K_GRP__ 判定开头）；b) 4.13.52 及更早无条件带
   //    a2k-exclusive-model-option 的形态。两者都以出厂兜底分支尾巴收口。
-  out = out.split(PATCHED_JS_CODE).join(ORIG_JS_PATTERN);
+  out = restoreStructural(out, PATCHED_JS_CODE, ORIG_JS_PATTERN);
   out = replaceSpan(out, JS_OPTION_GATED_START, JS_OPTION_TAIL, ORIG_JS_PATTERN, 20000);
   out = replaceSpan(out, 'className:"chat-input-popup-option a2k-exclusive-model-option"', JS_OPTION_TAIL, ORIG_JS_PATTERN, 20000);
   // 2. 菜单容器类名：a) 4.13.53 起 `"chat-input-popup-menu"+(r.some(…)?" a2k-model-selector-menu":"")`（任何以 `+(` 开头、
   //    到 `,style:d,role:"listbox"` 为止的表达式变体都回到出厂字面量）；b) 旧版逐字类名
-  out = out.split(PATCHED_MENU_CODE).join(ORIG_MENU_PATTERN);
+  out = restoreStructural(out, PATCHED_MENU_CODE, ORIG_MENU_PATTERN);
   out = replaceSpan(out, 'className:"chat-input-popup-menu"+(', '),style:d,role:"listbox"', 'className:"chat-input-popup-menu",style:d,role:"listbox"', 400);
   out = out.replace(/className:"chat-input-popup-menu a2k-[^"]*"/g, 'className:"chat-input-popup-menu"');
-  // 3. 选中项居中滚动 ref（任何带 if(…) 分支的变体都回到出厂单句）
-  out = out.split(PATCHED_REF_CODE).join(ORIG_REF_PATTERN);
+  // 3. ref 的历史变体兜底（旧版补丁没有标记门，锚点不同）
   out = replaceSpan(out, "ref:a(O=>{m.current[x]=O;if(", '},"ref")', ORIG_REF_PATTERN, 2000);
   // 4. 通道 B 触发器：用户已关闭，任何残留一律清掉
   out = out.split(PATCHED_TRIGGER_CODE).join(ORIG_TRIGGER_PATTERN);
@@ -1127,10 +1571,10 @@ function restoreSelectorScript(content: string): string {
   //    c) 4.13.36 及更早的函数内四处局部替换（cursor-* 类名）：按 Bde 函数首尾锚点整体回填出厂，只在函数体带
   //       a2k-cu / cursor- 标记时才动（Kiro 升级后的新函数体不碰）
   out = restoreCarriedPopover(out);
-  out = out.split(PATCHED_POPOVER_CODE).join(ORIG_POPOVER_PATTERN);
+  out = restorePatchedPopover(out);
   out = restoreMarkedSpan(out, "function Bde(t){", 'a(Bde,"ContextUsagePopover");', /a2k-cu|cursor-context|cursor-legend-dot|cursor-row-left/, ORIG_POPOVER_PATTERN, 12000);
-  // 6. 弹层调用处多传的 a2kUsage 属性（正则不带函数名，任何压缩名都覆盖）
-  out = out.split(PATCHED_POPOVER_CALL_CODE).join(ORIG_POPOVER_CALL_PATTERN);
+  // 6. 弹层调用处多传的 a2kUsage 属性：函数体与调用处已在 restorePatchedPopover 里一起处理，
+  //    这里只兜底清理任何残留（旧版本可能只写了调用处）。
   out = out.replace(/,a2kUsage:n\}\)/g, "})");
   // 7. 聊天框「上下文」下拉（4.13.55）：删定界函数段 + 调用处拆包
   out = restoreCtxSelector(out);
@@ -1139,27 +1583,31 @@ function restoreSelectorScript(content: string): string {
 
 /**
  * 在出厂内容上打 Context Usage 弹层两处（函数体 + 调用处传参）。三个条件全部成立才打：
- * 结构正则唯一命中出厂函数（拿到实际的函数名 / 警告函数名）、以该函数名渲染的调用处唯一命中、
+ * 结构匹配唯一命中出厂函数（拿到实际的函数名 / 警告函数名）、以该函数名渲染的调用处唯一命中、
  * `a(名,"useSessionConfig")` 标签唯一反查到 hook 名。任一不成立返回 null（全有或全无）。
  */
 function applyPopover(content: string): string | null {
   const fac = findPopoverFactory(content);
   if (!fac) return null;
-  const call = findPopoverCall(content, fac.names.fn);
-  if (!call) return null;
   const useSessionConfig = resolveTaggedName(content, "useSessionConfig");
   if (!useSessionConfig) return null;
-  const actual = [fac.names.fn, fac.names.warn, useSessionConfig];
-  if (namesCollide(PATCHED_POPOVER_CODE, POPOVER_PATCH_CANON, actual)) return null;
+  // 补丁模板直接按真机名字渲染（补丁自带局部名保持原样，避免与真机压缩名撞车）。
+  // 模板渲染出来的函数名 / 警告函数名必须与结构匹配读出的名字一致，否则宁可不打。
+  const patchedFnText = renderTemplate(PATCHED_POPOVER_CODE, POPOVER_PATCH_CANON, [fac.names.fn, fac.names.warn, useSessionConfig]);
   const head = `function ${fac.names.fn}(t){`;
-  const body = renderTemplate(PATCHED_POPOVER_CODE, POPOVER_PATCH_CANON, actual);
-  if (!body.startsWith(head)) return null;
-  const patchedFn = head + carryMarker(fac.text) + body.slice(head.length);
-  const patchedCall = renderTemplate(PATCHED_POPOVER_CALL_CODE, ["Bde"], [fac.names.fn]);
+  if (!patchedFnText.startsWith(head)) return null;
+  const patchedFn = head + carryMarker(fac.text) + patchedFnText.slice(head.length);
+  // 调用处：结构匹配定位（用真机函数名书写的出厂形态）。补丁形态 = 命中的真机文本 + `,a2kUsage:<store>}`。
+  // 不能拿 PATCHED_POPOVER_CALL_CODE 模板渲染：那串以 1.0.411 的局部名（`Y` / `E` / `I` / `R`…）书写，
+  // 直接套上去会把真机自己的包装变量名写错（实测 1.1.14 是 `q=g&&`，模板写的是 `Y=g&&`）。
+  const callSpan = matchMasked(content, renderTemplate(ORIG_POPOVER_CALL_PATTERN, ["Bde"], [fac.names.fn]));
+  if (!callSpan) return null;
+  if (!callSpan.text.endsWith("})")) return null;
+  const patchedCall = `${callSpan.text.slice(0, -2)},a2kUsage:n})`;
   // 两段互不重叠；从后往前拼，前一段的偏移不受影响
   const spans = [
     { start: fac.start, end: fac.end, text: patchedFn },
-    { start: call.start, end: call.end, text: patchedCall },
+    { start: callSpan.start, end: callSpan.end, text: patchedCall },
   ].sort((a, b) => b.start - a.start);
   let out = content;
   for (const s of spans) out = out.slice(0, s.start) + s.text + out.slice(s.end);
@@ -1171,30 +1619,75 @@ function applyPopover(content: string): string | null {
  * 任一不命中就整个文件一字不写——只打菜单不打选项行，会得到一个被收窄成 270px 却仍是
  * 原生行的怪菜单，正是「半补丁」。Context Usage 弹层两处（函数体 + 调用处传参）同理：只换函数不传参，
  * 弹层拿不到 breakdown 会退回三项百分比，虽不崩但不是目标外观。通道 B 不打。
+ *
+ * 4.13.59 起三处选择器靶点改用结构匹配（见 scanMasked）：Kiro 重新压缩 webview bundle
+ * 只会改标识符，规范模板除压缩名外逐字不变，因此不再依赖 1.0.411 / 1.0.437 的压缩名。
  */
 function applySelectorScript(content: string): string {
-  const selectorHit = [ORIG_JS_PATTERN, ORIG_MENU_PATTERN, ORIG_REF_PATTERN].every((s) => content.includes(s));
-  if (!selectorHit) return content;
-  let out = content
-    .replace(ORIG_JS_PATTERN, PATCHED_JS_CODE)
-    .replace(ORIG_MENU_PATTERN, PATCHED_MENU_CODE)
-    .replace(ORIG_REF_PATTERN, PATCHED_REF_CODE);
+  // 选项行：结构匹配 → 用真机压缩名渲染补丁
+  const jsSpan = matchMasked(content, ORIG_JS_PATTERN);
+  if (!jsSpan) return content;
+  const patchedJs = renderMatched(PATCHED_JS_CODE, ORIG_JS_PATTERN, jsSpan);
+  if (!patchedJs) return content;
+  // 菜单容器
+  const menuSpan = matchMasked(content, ORIG_MENU_PATTERN);
+  if (!menuSpan) return content;
+  const patchedMenu = renderMatched(PATCHED_MENU_CODE, ORIG_MENU_PATTERN, menuSpan);
+  if (!patchedMenu) return content;
+  // 选中项居中滚动 ref：该写法是通用形态（bundle 里出现多处的
+  // `ref:a(X=>{arr.current[i]=X},"ref")`），必须限定作用域。实测 1.1.14 里目标 ref
+  // 紧挨在 `className:"chat-input-popup-option"` 之前约 40 字符，这里留 2000 字符窗口，
+  // 并要求窗口内唯一命中，避免撞上上下文拾取器 / 智能体列表的同形 ref。
+  const refWindowStart = Math.max(0, jsSpan.start - REF_SCOPE_CHARS);
+  const refSpan = matchMasked(content.slice(refWindowStart, jsSpan.start), ORIG_REF_PATTERN);
+  if (!refSpan) return content;
+  const patchedRef = renderMatched(PATCHED_REF_CODE, ORIG_REF_PATTERN, refSpan);
+  if (!patchedRef) return content;
+
+  // 三处互不重叠；从后往前拼，前一段的偏移不受影响
+  const spans = [
+    { start: jsSpan.start, end: jsSpan.end, text: patchedJs },
+    { start: menuSpan.start, end: menuSpan.end, text: patchedMenu },
+    { start: refWindowStart + refSpan.start, end: refWindowStart + refSpan.end, text: patchedRef },
+  ].sort((a, b) => b.start - a.start);
+  let out = content;
+  for (const s of spans) out = out.slice(0, s.start) + s.text + out.slice(s.end);
   out = applyPopover(out) ?? out;
   // 可选组（4.13.55）：聊天框「上下文」下拉——锚点不命中就不打，不影响上面几处
   return applyCtxSelector(out) ?? out;
 }
 
-/** mermaid-*.js 的写入计划（只读盘、不写）。目录不存在 / 不可读（非 Kiro 宿主）→ unavailable 且无文件。 */
-async function planModelSelectorScript(enabled: boolean): Promise<TargetPlan> {
-  const dir = jsDir();
+/**
+ * 「补丁已在位」的判定标记。
+ *
+ * **不能用 `content.includes(PATCHED_JS_CODE)`**：模板是以某一版 Kiro 的压缩名书写的，而真正写进
+ * 真机的补丁是 renderMatched 用**真机压缩名**渲染出来的形态（1.1.14 把选项行 name 变量压成 `w`），
+ * 规范模板永远不会逐字出现在文件里 → 判定恒为 false。
+ *
+ * 后果不只是「误报」：`unavailable` 会让 `syncGroupHeaderStyleUnlocked` 里的
+ * `styleEnabled = enabled && selectorScript.status !== "unavailable"` 变成 false，
+ * 于是 CARD_CSS 被当成「改外观却没有对应功能」的半补丁剥掉——模型卡片带着补丁却没样式，
+ * 看起来就是一片没有样式的碎字符。而且每次重载都会重演一遍，永远无法自愈。
+ *
+ * 只认「类名 / 注入函数名」这类**字符串字面量**：压缩器一个字符都不动字面量，
+ * 出厂文件也绝不含 `a2k-`（见 stripBlock 的注释）。
+ */
+const SELECTOR_PATCH_MARKS = ["a2k-model-name-box", "a2k-card-head", "a2k-exclusive-model-option"];
+
+/**
+ * mermaid-*.js 的写入计划（只读盘、不写）。
+ *
+ * `pkgs` 是**全部**承载模型选择器的 package（见 selectorPackages）——Kiro 1.1.14 起同一 chunk
+ * 在 `kiro-ui-agent-chat` 与 `kiro-ui-session-details` 各有一份，逐份都要处理。
+ * 一份都没有（目录不存在 / 不可读，或真机确实没有模型选择器靶点）→ unavailable 且无文件。
+ */
+async function planModelSelectorScript(enabled: boolean, pkgs: SelectorPackage[]): Promise<TargetPlan> {
   const files: FilePlan[] = [];
   let patchedPresent = false;
   let ctxBefore = false;
   let ctxAfter = false;
   try {
-    for (const f of await fs.promises.readdir(dir)) {
-      if (!f.endsWith(".js") || !f.startsWith("mermaid-")) continue;
-      const p = path.join(dir, f);
+    for (const { chunk: p } of pkgs) {
       const original = await fs.promises.readFile(p, "utf8");
       await sweepStaleTmp(p);
       // 先归一到出厂，再按需打当前版本补丁：旧版本补丁孤儿会被顺手升级 / 清除，
@@ -1202,7 +1695,7 @@ async function planModelSelectorScript(enabled: boolean): Promise<TargetPlan> {
       let content = restoreSelectorScript(original);
       if (enabled) content = applySelectorScript(content);
       if (content !== original) files.push({ file: p, original, next: content });
-      if (content.includes(PATCHED_JS_CODE)) patchedPresent = true;
+      if (SELECTOR_PATCH_MARKS.some((t) => content.includes(t))) patchedPresent = true;
       if (original.includes(CTX_SEL_FN)) ctxBefore = true;
       if (content.includes(CTX_SEL_FN)) ctxAfter = true;
     }
@@ -1267,21 +1760,38 @@ function stripStrayA2kRules(css: string): string {
   return out;
 }
 
-/** style.css 的写入计划（只读盘、不写）。文件不可读 → unavailable + `<code> <path>` detail（ENOENT 表示非 Kiro 宿主）。 */
-async function planStyleSheet(enabled: boolean): Promise<TargetPlan> {
-  const file = styleFile();
-  let current: string;
-  try {
-    current = await fs.promises.readFile(file, "utf8");
-  } catch (e) {
-    const code = (e as NodeJS.ErrnoException).code || "";
-    return { status: "unavailable", detail: `${code} ${file}`.trim(), files: [] };
+/**
+ * style.css 的写入计划（只读盘、不写）。
+ *
+ * 每个承载模型选择器的 package 都有自己的 style.css，而 CSS 只能作用于**同一个 webview 文档**里的节点，
+ * 所以 CARD_CSS 必须逐份落进各自的 style.css（4.13.60：session-details 那份漏掉时，卡片补丁虽然打上了，
+ * 但样式规则不在该文档里，卡片依然是没样式的裸标记）。
+ *
+ * 全部文件都不可读 → unavailable + `<code> <path>` detail（ENOENT 表示非 Kiro 宿主）。
+ * 部分可读部分不可读 → 能写的照写，读失败进 detail 上浮。
+ */
+async function planStyleSheet(enabled: boolean, styleFiles: string[]): Promise<TargetPlan> {
+  const files: FilePlan[] = [];
+  const errors: string[] = [];
+  for (const file of styleFiles) {
+    let current: string;
+    try {
+      current = await fs.promises.readFile(file, "utf8");
+    } catch (e) {
+      const code = (e as NodeJS.ErrnoException).code || "";
+      errors.push(`${code} ${file}`.trim());
+      continue;
+    }
+    await sweepStaleTmp(file);
+    const stripped = stripBlock(current);
+    const next = enabled ? `${stripped.replace(/\s+$/, "")}\n${CARD_CSS}\n` : stripped;
+    if (next === current) continue;
+    files.push({ file, original: current, next });
   }
-  await sweepStaleTmp(file);
-  const stripped = stripBlock(current);
-  const next = enabled ? `${stripped.replace(/\s+$/, "")}\n${CARD_CSS}\n` : stripped;
-  if (next === current) return { status: "unchanged", files: [] };
-  return { status: enabled ? "applied" : "removed", files: [{ file, original: current, next }] };
+  const detail = errors.join("; ");
+  if (files.length > 0) return { status: enabled ? "applied" : "removed", detail: detail || undefined, files };
+  if (errors.length > 0) return { status: "unavailable", detail, files: [] };
+  return { status: "unchanged", files: [] };
 }
 
 type TargetKey = "selectorScript" | "backend" | "style";
@@ -1318,7 +1828,10 @@ async function commitPlans(enabled: boolean, plans: Record<TargetKey, TargetPlan
       try {
         await writeAtomic(fp.file, fp.next);
         written.push(fp);
-        info(enabled ? TARGET_LOG[key].on : TARGET_LOG[key].off, fp.file);
+        // 日志按**计划状态**判定，不按 enabled 参数：关闭卡片样式时 styleEnabled=false，
+        // 计划是 removed（剥掉 CARD_CSS），若按 enabled=true 记成 "applied card model selector style"
+        // 就是谎报——排查时会以为 CSS 在位，实际文件里一个 a2k 都没有（2026-09-15 实拍）。
+        info(plan.status === "removed" ? TARGET_LOG[key].off : TARGET_LOG[key].on, fp.file);
       } catch (e) {
         const msg = (e as Error).message || String(e);
         error(`${key} write failed:`, fp.file, msg);
@@ -1369,12 +1882,14 @@ export function syncGroupHeaderStyle(enabled: boolean): Promise<StyleSyncResult>
 }
 
 async function syncGroupHeaderStyleUnlocked(enabled: boolean): Promise<StyleSyncResult> {
-  const selectorScript = await planModelSelectorScript(enabled);
+  // 一次发现，两处复用：同一 chunk 在多个 package 各有一份，CSS 也要落进各自的 style.css。
+  const pkgs = await selectorPackages();
+  const selectorScript = await planModelSelectorScript(enabled, pkgs);
   const backend = await planKiroAgentBackend(enabled);
   // mermaid 靶点不命中（Kiro 升级）时不追加 CSS：CSS 里 .kiro-context-popover* 等规则
   // 不带专属类，单独落下就是「改了 IDE 外观却没有对应功能」的半补丁。
   const styleEnabled = enabled && selectorScript.status !== "unavailable";
-  const style = await planStyleSheet(styleEnabled);
+  const style = await planStyleSheet(styleEnabled, pkgs.map((p) => p.style));
   const committed = await commitPlans(enabled, { selectorScript, backend, style });
 
   const targets = {
@@ -1404,8 +1919,11 @@ async function syncGroupHeaderStyleUnlocked(enabled: boolean): Promise<StyleSync
     status = "unavailable";
     detail = writeErrors.join("; ");
   } else if (enabled && committed.selectorScript.status === "unavailable") {
+    // 4.13.59 起靶点定位不再依赖压缩名，所以走到这里只可能是 Kiro 真的改写了出厂结构
+    // （不是「重新压缩」）。同时别再让用户去查目录权限：写失败会带 detail 走上一分支。
     status = "unavailable";
-    detail = "model selector target not found in mermaid-*.js (Kiro version drift); style not applied";
+    detail =
+      "model selector targets not found in mermaid-*.js; this Kiro build changed the factory structure (not just minified names), so the patch was skipped and no style was applied";
   } else if (Object.values(targets).some((s) => s === "applied")) {
     status = "applied";
   } else if (Object.values(targets).some((s) => s === "removed")) {
@@ -1423,9 +1941,18 @@ export const __selectorStyleInternals = {
   CARD_CSS,
   /** 结构匹配器：模板以 1.0.411 压缩名书写，名字按结构捕获 / 反查 / 渲染。 */
   matchers: {
-    templateRegex,
     renderTemplate,
     namesCollide,
+    /** 剥掉 CARD_CSS 标记块与 a2k- 孤儿规则，供 dev/verify-selector-patch.js 把 fixture 归一为出厂。 */
+    stripBlock,
+    /** 结构等价匹配（4.13.59）：不依赖任何压缩名的靶点定位 + 改名映射渲染。 */
+    scanMasked,
+    matchMasked,
+    renderMatched,
+    /** 还原管线入口，供 dev/verify-selector-patch.js 逐步观测中间产物。 */
+    restoreStructural,
+    restorePatchedPopover,
+    restoreSelectorScript,
     resolveTaggedName,
     findPopoverFactory,
     findPopoverCall,
@@ -1483,5 +2010,12 @@ export const __selectorStyleInternals = {
   },
   legacy: LEGACY_POPOVER_VARIANTS,
   legacySelector: LEGACY_SELECTOR_VARIANTS,
-  paths: { styleFile, jsDir, kiroAgentBackendFile },
+  paths: {
+    /** 主 package（kiro-ui-agent-chat）的样式表；承载模型选择器的 package 可能不止一个，见 selectorPackages。 */
+    styleFile,
+    jsDir,
+    kiroAgentBackendFile,
+    /** 承载模型选择器的全部 package（chunk + 各自 style.css），供 dev/verify-selector-patch.js 断言。 */
+    selectorPackages,
+  },
 };
