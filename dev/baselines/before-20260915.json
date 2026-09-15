@@ -1,0 +1,457 @@
+{
+  "db": "~/Library/Application Support/Kiro/User/globalStorage/state.vscdb",
+  "since": null,
+  "modelFilter": null,
+  "summaries": [
+    {
+      "label": "deepseek/deepseek-v4.1-flash",
+      "n": 978,
+      "okN": 958,
+      "failN": 20,
+      "hitRate": 0.9795585749762428,
+      "ctxP50": 259250,
+      "ctxP90": 457977,
+      "ttft": {
+        "p50": 16215,
+        "p90": 32499,
+        "n": 957
+      },
+      "lat": {
+        "p50": 20853,
+        "p90": 39072
+      },
+      "warmN": 902,
+      "buckets": [
+        {
+          "label": "<50K",
+          "n": 3,
+          "ttft": 2820,
+          "lat": 8214
+        },
+        {
+          "label": "50–100K",
+          "n": 49,
+          "ttft": 5316,
+          "lat": 8279
+        },
+        {
+          "label": "100–150K",
+          "n": 60,
+          "ttft": 6312,
+          "lat": 8721
+        },
+        {
+          "label": "150–200K",
+          "n": 137,
+          "ttft": 8015,
+          "lat": 14016
+        },
+        {
+          "label": "200–250K",
+          "n": 145,
+          "ttft": 13848,
+          "lat": 20591
+        },
+        {
+          "label": "250–300K",
+          "n": 141,
+          "ttft": 16243,
+          "lat": 23031
+        },
+        {
+          "label": "300–400K",
+          "n": 202,
+          "ttft": 19269,
+          "lat": 26090
+        },
+        {
+          "label": "400–600K",
+          "n": 165,
+          "ttft": 19833,
+          "lat": 23296
+        },
+        {
+          "label": "600K+",
+          "n": 0,
+          "ttft": null,
+          "lat": null
+        }
+      ]
+    },
+    {
+      "label": "gpt-5.6-sol",
+      "n": 808,
+      "okN": 799,
+      "failN": 9,
+      "hitRate": 0.9554612926116217,
+      "ctxP50": 171073,
+      "ctxP90": 299534,
+      "ttft": {
+        "p50": 14970,
+        "p90": 28307,
+        "n": 799
+      },
+      "lat": {
+        "p50": 23297,
+        "p90": 67114
+      },
+      "warmN": 608,
+      "buckets": [
+        {
+          "label": "<50K",
+          "n": 17,
+          "ttft": 8449,
+          "lat": 13802
+        },
+        {
+          "label": "50–100K",
+          "n": 78,
+          "ttft": 9861,
+          "lat": 18891
+        },
+        {
+          "label": "100–150K",
+          "n": 97,
+          "ttft": 13569,
+          "lat": 29133
+        },
+        {
+          "label": "150–200K",
+          "n": 94,
+          "ttft": 14328,
+          "lat": 22868
+        },
+        {
+          "label": "200–250K",
+          "n": 101,
+          "ttft": 14081,
+          "lat": 20330
+        },
+        {
+          "label": "250–300K",
+          "n": 143,
+          "ttft": 17147,
+          "lat": 24112
+        },
+        {
+          "label": "300–400K",
+          "n": 78,
+          "ttft": 19828,
+          "lat": 24975
+        },
+        {
+          "label": "400–600K",
+          "n": 0,
+          "ttft": null,
+          "lat": null
+        },
+        {
+          "label": "600K+",
+          "n": 0,
+          "ttft": null,
+          "lat": null
+        }
+      ]
+    },
+    {
+      "label": "gemini-3.8-flash",
+      "n": 100,
+      "okN": 98,
+      "failN": 2,
+      "hitRate": 0.8170742681813702,
+      "ctxP50": 123115,
+      "ctxP90": 183262,
+      "ttft": {
+        "p50": 8413,
+        "p90": 13330,
+        "n": 98
+      },
+      "lat": {
+        "p50": 8423,
+        "p90": 13599
+      },
+      "warmN": 26,
+      "buckets": [
+        {
+          "label": "<50K",
+          "n": 0,
+          "ttft": null,
+          "lat": null
+        },
+        {
+          "label": "50–100K",
+          "n": 2,
+          "ttft": null,
+          "lat": null
+        },
+        {
+          "label": "100–150K",
+          "n": 11,
+          "ttft": 8745,
+          "lat": 8770
+        },
+        {
+          "label": "150–200K",
+          "n": 13,
+          "ttft": 10668,
+          "lat": 10723
+        },
+        {
+          "label": "200–250K",
+          "n": 0,
+          "ttft": null,
+          "lat": null
+        },
+        {
+          "label": "250–300K",
+          "n": 0,
+          "ttft": null,
+          "lat": null
+        },
+        {
+          "label": "300–400K",
+          "n": 0,
+          "ttft": null,
+          "lat": null
+        },
+        {
+          "label": "400–600K",
+          "n": 0,
+          "ttft": null,
+          "lat": null
+        },
+        {
+          "label": "600K+",
+          "n": 0,
+          "ttft": null,
+          "lat": null
+        }
+      ]
+    },
+    {
+      "label": "gpt-5.6-terra",
+      "n": 72,
+      "okN": 72,
+      "failN": 0,
+      "hitRate": 0.9937177081124328,
+      "ctxP50": 198941,
+      "ctxP90": 216833,
+      "ttft": {
+        "p50": 15647,
+        "p90": 21447,
+        "n": 72
+      },
+      "lat": {
+        "p50": 19992,
+        "p90": 26408
+      },
+      "warmN": 72,
+      "buckets": [
+        {
+          "label": "<50K",
+          "n": 0,
+          "ttft": null,
+          "lat": null
+        },
+        {
+          "label": "50–100K",
+          "n": 0,
+          "ttft": null,
+          "lat": null
+        },
+        {
+          "label": "100–150K",
+          "n": 0,
+          "ttft": null,
+          "lat": null
+        },
+        {
+          "label": "150–200K",
+          "n": 39,
+          "ttft": 14454,
+          "lat": 18832
+        },
+        {
+          "label": "200–250K",
+          "n": 33,
+          "ttft": 15789,
+          "lat": 20334
+        },
+        {
+          "label": "250–300K",
+          "n": 0,
+          "ttft": null,
+          "lat": null
+        },
+        {
+          "label": "300–400K",
+          "n": 0,
+          "ttft": null,
+          "lat": null
+        },
+        {
+          "label": "400–600K",
+          "n": 0,
+          "ttft": null,
+          "lat": null
+        },
+        {
+          "label": "600K+",
+          "n": 0,
+          "ttft": null,
+          "lat": null
+        }
+      ]
+    },
+    {
+      "label": "gpt-5.6-luna",
+      "n": 41,
+      "okN": 41,
+      "failN": 0,
+      "hitRate": 0.957046300745314,
+      "ctxP50": 328621,
+      "ctxP90": 341548,
+      "ttft": {
+        "p50": 17104,
+        "p90": 22818,
+        "n": 41
+      },
+      "lat": {
+        "p50": 20257,
+        "p90": 28885
+      },
+      "warmN": 36,
+      "buckets": [
+        {
+          "label": "<50K",
+          "n": 0,
+          "ttft": null,
+          "lat": null
+        },
+        {
+          "label": "50–100K",
+          "n": 3,
+          "ttft": 6221,
+          "lat": 6993
+        },
+        {
+          "label": "100–150K",
+          "n": 2,
+          "ttft": null,
+          "lat": null
+        },
+        {
+          "label": "150–200K",
+          "n": 0,
+          "ttft": null,
+          "lat": null
+        },
+        {
+          "label": "200–250K",
+          "n": 0,
+          "ttft": null,
+          "lat": null
+        },
+        {
+          "label": "250–300K",
+          "n": 0,
+          "ttft": null,
+          "lat": null
+        },
+        {
+          "label": "300–400K",
+          "n": 31,
+          "ttft": 17887,
+          "lat": 20710
+        },
+        {
+          "label": "400–600K",
+          "n": 0,
+          "ttft": null,
+          "lat": null
+        },
+        {
+          "label": "600K+",
+          "n": 0,
+          "ttft": null,
+          "lat": null
+        }
+      ]
+    },
+    {
+      "label": "deepseek/deepseek-v4-pro",
+      "n": 1,
+      "okN": 1,
+      "failN": 0,
+      "hitRate": 0.0039465367598316555,
+      "ctxP50": 64867,
+      "ctxP90": 64867,
+      "ttft": {
+        "p50": 4080,
+        "p90": 4080,
+        "n": 1
+      },
+      "lat": {
+        "p50": 6310,
+        "p90": 6310
+      },
+      "warmN": 0,
+      "buckets": [
+        {
+          "label": "<50K",
+          "n": 0,
+          "ttft": null,
+          "lat": null
+        },
+        {
+          "label": "50–100K",
+          "n": 0,
+          "ttft": null,
+          "lat": null
+        },
+        {
+          "label": "100–150K",
+          "n": 0,
+          "ttft": null,
+          "lat": null
+        },
+        {
+          "label": "150–200K",
+          "n": 0,
+          "ttft": null,
+          "lat": null
+        },
+        {
+          "label": "200–250K",
+          "n": 0,
+          "ttft": null,
+          "lat": null
+        },
+        {
+          "label": "250–300K",
+          "n": 0,
+          "ttft": null,
+          "lat": null
+        },
+        {
+          "label": "300–400K",
+          "n": 0,
+          "ttft": null,
+          "lat": null
+        },
+        {
+          "label": "400–600K",
+          "n": 0,
+          "ttft": null,
+          "lat": null
+        },
+        {
+          "label": "600K+",
+          "n": 0,
+          "ttft": null,
+          "lat": null
+        }
+      ]
+    }
+  ]
+}
