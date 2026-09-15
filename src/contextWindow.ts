@@ -11,6 +11,16 @@
  *    （渠道字段 → 厂商目录 → models.dev → 默认），不因本功能改变默认行为。
  *  - CPS 把生效窗口放进 `tokenLimits.maxInputTokens`（Kiro 据此算 80% / 95% 阈值与百分比），把候选表放进
  *    description 私有微格式第 5 位（`__A2K_MDL__|推理|图片|窗口|挡位表|末行`），聊天框下拉 / 弹层从那里读。
+ *
+ * ⚠️ **生效窗口只能有一个来源。** CPS 广播、侧边栏下拉、流式占用百分比三条路径都走
+ * `modelStore.resolveWindowForGroup()`；一旦分歧，同一模型会出现两个窗口值。曾经因此发生过一次事故：
+ * 流式百分比路径用了另一个只查 mergedCache + models.dev 的函数，于是 Codex 系模型上
+ * CPS 报 272000、百分比按目录的 1050000 算（差 3.86 倍）→ 永远到不了 80% 阈值 → 上下文无界增长。
+ * 详见 `modelStore.resolveWindowForGroup` 的注释。
+ *
+ * Kiro 侧机制（1.0.437 bundle 实证，`Oxo()` / `KJl()`）：SummarizationDetectionNode 读流式响应里的
+ * `contextUsageEvent.contextUsagePercentage`，**>= 80% 触发摘要、>= 95% 触发即时截断**。
+ * 所以「报多大的窗口，Kiro 就在多大的上下文处压缩」是成立的。
  */
 
 /** 标准梯子（tokens）。 */

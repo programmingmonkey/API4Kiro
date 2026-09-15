@@ -120,5 +120,15 @@ export function contextOverflowException(status: number, text: string, maxUpstre
   };
 }
 
-/** ❌ 正文里给用户的一句话（与异常帧同时发出）。 */
+/**
+ * ❌ 正文里给用户的一句话（与异常帧同时发出）。
+ *
+ * 「把该模型的『上下文』挡位调低」这条建议**是有效的**，不要删：Kiro 按插件上报的占用百分比
+ * （= tokens ÷ 生效窗口）在 **>= 80% 触发摘要、>= 95% 触发截断**（1.0.437 bundle 里的
+ * SummarizationDetectionNode / Oxo 实证），所以调低窗口确实会让 Kiro 更早压缩，
+ * 从而降低再次撞上游上限的概率。
+ *
+ * 曾经误删过这条建议——依据是一份有混淆因素的推断（用 Codex 系模型当反例，而它恰好是
+ * 生效窗口口径分歧的模型）。教训见 modelStore.resolveWindowForGroup 的注释。
+ */
 export const CONTEXT_OVERFLOW_USER_HINT = "上下文超长：这条请求的输入超过了该模型 / 渠道的上下文窗口。Kiro 将自动压缩对话后重试；若没有自动重试，请新开会话或在侧边栏模型页把该模型的「上下文」挡位调低。";

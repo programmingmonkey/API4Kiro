@@ -1,5 +1,5 @@
 import { CwEvent } from "./cwTypes";
-import { contextWindowForModel as relayContextWindow } from "./modelStore";
+import { effectiveContextWindowFor } from "./modelStore";
 
 /** Token counts captured from an upstream response, normalized across protocols. */
 export interface CapturedUsage {
@@ -58,18 +58,37 @@ export function resolveOutputTokens(u: Record<string, unknown> | undefined): num
 const FALLBACK_CONTEXT_WINDOW = 200000;
 
 /**
- * Context window for the context-usage bar. Prefers the relay's /models
- * `context_window` (authoritative and identical to the model list Kiro's picker
- * shows, so one source of truth drives both). Falls back to a name heuristic
+ * Context window for the context-usage bar — **the single source of truth** for the
+ * window this extension reports on both channels: CPS broadcasts it as
+ * `tokenLimits.maxInputTokens`, and every streamed response carries
+ * `contextUsageEvent.contextUsagePercentage = round(promptTokens / window)`.
+ *
+ * Primary source is `effectiveContextWindowFor()` (modelStore), which resolves the
+ * full precedence chain — user override → relay /models field → vendor catalog →
+ * Codex subscription → models.dev → 200K default. Falls back to a name heuristic
  * aligned to Kiro's official ListAvailableModels, then 200K.
  *
- * Shared by both protocol converters: the bar means the same thing whichever
+ * ⚠️ Kiro **does** act on the percentage: its `SummarizationDetectionNode` reads
+ * `contextUsagePercentage` and triggers at >= 80% (summarization) and >= 95%
+ * (immediate truncation). So this window decides *when* Kiro compacts: a smaller
+ * window makes Kiro compact earlier and keeps the working context in a faster
+ * latency band. Do not "correct" this comment to say Kiro ignores it — that claim
+ * was made from confounded data and is false.
+ * (Evidence: Kiro 1.0.437 bundle, `Oxo()` / `KJl()` in kiro.kiro-agent/dist/extension.js.)
+ *
+ * Shared by all protocol converters: the bar means the same thing whichever
  * endpoint answered, and the heuristic already covers GPT-class names.
+ *
+ * 名称刻意不叫 `contextWindowForModel`：历史上 modelStore 里有个同名函数只查 mergedCache
+ * 与 models.dev 目录，两条路径因此分歧过一次（见 modelStore.resolveWindowForGroup 的说明）。
+ * 这里是**纯兜底**，只有 `effectiveContextWindowFor` 查不到时才走到。
  */
-export function contextWindowForModel(modelId: string): number {
-  const fromRelay = relayContextWindow(modelId);
-  if (fromRelay && fromRelay > 0) {
-    return fromRelay;
+function fallbackContextWindowFor(modelId: string): number {
+  // 与 CPS 同源：同一个模型只能有一个窗口值，否则进度条与选择器会互相矛盾，
+  // 更严重的是 Codex 系模型会因此永远到不了 80% 阈值 → 永不压缩（见 modelStore 的说明）。
+  const effective = effectiveContextWindowFor(modelId);
+  if (effective && effective > 0) {
+    return effective;
   }
   const m = (modelId || "").toLowerCase();
   // 1M 上下文（对齐 Kiro 官方 ListAvailableModels 与 Anthropic 模型页）：auto、Opus 5、Opus 4.8/4.7/4.6、Sonnet 4.6/5、Fable 5/5.1
@@ -100,7 +119,7 @@ export function contextUsagePercentFloat(tokens: number, modelId: string): numbe
   if (!tokens || tokens <= 0) {
     return null;
   }
-  const window = contextWindowForModel(modelId);
+  const window = fallbackContextWindowFor(modelId);
   if (!window || window <= 0) {
     return null;
   }

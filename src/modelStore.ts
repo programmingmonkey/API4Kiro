@@ -723,12 +723,46 @@ export function thinkingVariantOf(providerId: string, base: string): string | un
   return hit?.id;
 }
 
-export function contextWindowForModel(id: string): number | undefined {
-  const hit = mergedCache.find((m) => m.id === id);
-  if (hit?.contextWindow) {
-    return hit.contextWindow;
-  }
-  return lookupCapability(id)?.contextWindow;
+/**
+ * **生效上下文窗口的唯一来源。** CPS 广播、侧边栏「上下文」下拉、以及流式响应里的
+ * 占用百分比（`streamShared.contextUsagePercentFloat` → `effectiveContextWindowFor`）
+ * 必须全部走这里，否则同一个模型会出现两个窗口值。
+ *
+ * 来源优先级（见 contextWindow.resolveContextWindow）：用户覆盖 → 渠道 /models 字段 →
+ * 厂商目录 → Codex 订阅口径 → models.dev（只认精确条目）→ 默认 200000。
+ *
+ * ⚠️ 历史教训：这里原本还有一个同名的 `contextWindowForModel(id)`，只查 mergedCache 与目录，
+ * **不读覆盖 / vendor / Codex 三个来源**。流式百分比路径用了它，于是 Codex 系模型上
+ * CPS 报 272000 而百分比按目录的 1050000 算（差 3.86 倍）→ 进度条永远偏低 →
+ * Kiro 到不了 80% 阈值 → 永不压缩、上下文无界增长。两条路径从此只允许有一个实现。
+ */
+export function resolveWindowForGroup(g: EffortGroup, kiroId: string): ContextWindowInfo {
+  const cap = lookupCapability(g.baseId);
+  // Codex 系模型命中订阅口径时**不再传 catalog**：models.dev 对这条通道是平台 API 口径的数，
+  // 混进来会把 1050000 变成「已知最大窗口」，进而让选择器多出一个点不得的挡位。
+  const codexWin = codexSubscriptionWindow(g.baseId);
+  return resolveContextWindow(
+    {
+      upstream: g.upstreamContextWindow,
+      vendor: g.vendorContextWindow,
+      codex: codexWin,
+      catalog: codexWin === undefined ? cap?.contextWindow : undefined,
+    },
+    getContextWindowOverride(kiroId)
+  );
+}
+
+/**
+ * 某个 Kiro 模型 id 的**生效**窗口（tokens）。找不到（例如不在选择器里的 id）返回 undefined，
+ * 由调用方回退到名字启发式。
+ *
+ * 成本：每次调用重建一次模型列表（≈ 已勾选模型数），`contextUsagePercentFloat` 每个响应只调一次，
+ * 量级可忽略；如需在热路径批量取用，请直接遍历 {@link contextWindowRows} 的结果。
+ */
+export function effectiveContextWindowFor(kiroModelId: string): number | undefined {
+  const row = contextWindowRows().find((r) => r.kiroId === kiroModelId);
+  const w = row?.info?.effective;
+  return w && w > 0 ? w : undefined;
 }
 
 /** 面板模型页每行「上下文」下拉的数据（4.13.55，R24）：按 CPS 同一套折叠 / 命名 / 解析规则算，保证与 Kiro 看到的一致。 */
@@ -746,17 +780,7 @@ export function contextWindowRows(): ContextWindowRow[] {
   groups.sort((a, b) => (order.get(a.providerId) ?? 1e9) - (order.get(b.providerId) ?? 1e9));
   const kiroIds = kiroModelIds(groups.map((g) => ({ id: g.baseId, providerId: g.providerId })));
   return groups.map((g, i) => {
-    const cap = lookupCapability(g.baseId);
-    const codexWin = codexSubscriptionWindow(g.baseId);
-    const info = resolveContextWindow(
-      {
-        upstream: g.upstreamContextWindow,
-        vendor: g.vendorContextWindow,
-        codex: codexWin,
-        catalog: codexWin === undefined ? cap?.contextWindow : undefined,
-      },
-      getContextWindowOverride(kiroIds[i])
-    );
+    const info = resolveWindowForGroup(g, kiroIds[i]);
     return { kiroId: kiroIds[i], baseId: g.baseId, providerId: g.providerId, info };
   });
 }

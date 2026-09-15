@@ -14,6 +14,7 @@ import {
   lookupCapability,
   resolveModelImage,
   resolveModelReasoning,
+  resolveWindowForGroup,
   EFFORT_LEVELS,
   BUDGET_EFFORT_LEVELS,
   DEFAULT_EFFORT_LEVEL,
@@ -22,9 +23,7 @@ import {
 import { getEffortMode } from "./effort";
 import type { ModelCapability } from "./modelCatalog";
 import { FORCED_THINKING_EFFORTS, isForcedThinkingModel } from "./thinkingPolicy";
-import { getContextWindowOverride } from "./config";
-import { ContextWindowInfo, formatContextTable, resolveContextWindow } from "./contextWindow";
-import { codexSubscriptionWindow } from "./codexCatalog";
+import { ContextWindowInfo, formatContextTable } from "./contextWindow";
 
 /**
  * models.dev 目录的 reasoning_options → Kiro 选择器要展示的档位列表。
@@ -194,20 +193,24 @@ export class CpsProxyServer {
       // 图片支持：用户覆盖 > 目录 > 保守认为支持（不误伤）。
       const imgDecided = resolveModelImage(g.baseId, g.providerId);
       const supportsImage = typeof imgDecided === "boolean" ? imgDecided : true;
-      // 上下文窗口：渠道字段 → 厂商目录 → **Codex 订阅口径** → models.dev（只认精确条目）→ 默认 200000；用户覆盖（键 = Kiro 里的模型 id）优先。
-      // Kiro 按 maxInputTokens 算百分比与 80% / 95% 阈值——这里报多少，Kiro 就在多少处压缩。
-      // Codex 系模型命中订阅口径时**不再传 catalog**：models.dev 对这条通道是平台 API 口径的数，
-      // 混进来会把 1050000 变成「已知最大窗口」，进而让选择器多出一个点不得的挡位。
-      const codexWin = codexSubscriptionWindow(g.baseId);
-      const ctx = resolveContextWindow(
-        {
-          upstream: g.upstreamContextWindow,
-          vendor: g.vendorContextWindow,
-          codex: codexWin,
-          catalog: codexWin === undefined ? cap?.contextWindow : undefined,
-        },
-        getContextWindowOverride(kiroIds[gi])
-      );
+      // 上下文窗口：**统一走 modelStore.resolveWindowForGroup()**，与侧边栏「上下文」下拉、
+      // 以及流式响应的占用百分比（streamShared → effectiveContextWindowFor）共用同一套解析。
+      //
+      // 这里报的 maxInputTokens = 生效窗口，它决定两件事：
+      //   ① 模型选择器 /「上下文」下拉的挡位；
+      //   ② 占用百分比的基准 —— 而 **Kiro 确实按这个百分比触发压缩**：
+      //      SummarizationDetectionNode（Kiro 1.0.437 bundle 里的 Oxo/KJl，读的是
+      //      contextUsageEvent.contextUsagePercentage）在 >= 80% 触发摘要、>= 95% 触发即时截断。
+      //      ⇒ 报多大的窗口，Kiro 就在多大的上下文处压缩。调小它 = 让 Kiro 更早压缩。
+      //
+      // ⚠️ 两条历史教训，别重蹈：
+      //   · 曾经存在第二个同名函数 modelStore.contextWindowForModel(id)，只查 mergedCache 与目录，
+      //     不读覆盖 / vendor / Codex 三个来源。流式百分比路径误用了它，于是 Codex 系模型上
+      //     CPS 报 272000、百分比按目录 1050000 算（差 3.86 倍）→ 进度条永远偏低 → 到不了 80%
+      //     → 永不压缩、上下文无界增长。已删除该函数，两条路径现在只有 resolveWindowForGroup 一个实现。
+      //   · 曾据上述现象错误地断言「Kiro 不看这个值」——那是混淆所致（gpt-5.6 恰好是窗口分歧的模型），
+      //     结论已撤回。推导见 docs/2026-09-15-dsh-vs-api2kiro-deepseek-assessment.md 附录 D。
+      const ctx = resolveWindowForGroup(g, kiroIds[gi]);
       ctxInfos.push(ctx);
 
       const model: CpsModel = {

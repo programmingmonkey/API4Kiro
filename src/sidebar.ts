@@ -3919,7 +3919,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         <span class="fchev">▶</span><h3>上下文</h3><span class="muted" id="ctxSum">--</span>
       </div>
       <div class="fbody">
-        <div class="hint" style="margin-top:0">Kiro 按每个模型报出的窗口算用量百分比：≥ 80% 自动摘要、≥ 95% 截断。上游返回「上下文超长」时本扩展已转成 Kiro 认得的溢出异常（Kiro 会自动压缩后重试，内建、无需开关）。窗口来源优先级：渠道 /models 字段 → 内置厂商表 → models.dev → 默认 200K；你的覆盖优先于全部。</div>
+        <div class="hint" style="margin-top:0">Kiro 按每个模型报出的窗口算用量百分比：≥ 80% 自动摘要、≥ 95% 截断——所以<b>调低窗口就会让 Kiro 更早压缩</b>。上游返回「上下文超长」时本扩展已转成 Kiro 认得的溢出异常（Kiro 会自动压缩后重试，内建、无需开关）。窗口来源优先级：渠道 /models 字段 → 内置厂商表 → models.dev → 默认 200K；你的覆盖优先于全部。</div>
         <div class="btns" style="margin:8px 0;">
           <button class="btn btn-ghost btn-sm" id="ctxResetAll" disabled>全部重置为自动</button>
         </div>
@@ -6421,6 +6421,8 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
   const CTX_SRC = { override: '你的覆盖', upstream: '渠道 /models 字段', vendor: '内置厂商表', codex: 'Codex 订阅口径目录', catalog: 'models.dev 目录', default: '未知，按默认 200K' };
   // 每行「上下文」下拉（4.13.55）：数据来自扩展 ctxWindows 消息（与 CPS 广播同一套算法）。候选 = 标准梯子 ≤ 已知最大窗口 ∪ 各来源
   // 精确值；当前值 = 用户覆盖 ?? 解析值。Kiro 按这里报出的窗口算用量百分比与 80% / 95% 压缩阈值——上游拒收长输入的模型选小一档即可。
+  // ⚠️ 这个窗口必须与 CPS 广播、流式占用百分比同源（都走 modelStore.resolveWindowForGroup），
+  // 否则同一模型会出现两个窗口值 → 百分比到不了阈值 → 永不压缩。见该函数的注释。
   // 选项分两组：「自动 · 来源」（解析值，选它 = 清除覆盖、回到跟随目录）与「手动覆盖」（其余挡位）——显示文案只有数字，窄面板里
   // 不再挤掉模型名。乐观更新：先改本地副本立刻重画，扩展回推 ctxWindows 时以真实状态覆盖。
   function ctxCell(p, mm) {

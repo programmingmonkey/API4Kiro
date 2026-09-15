@@ -114,6 +114,8 @@ Kiro 视图标题栏最右侧有两枚命令图标（4.13.56）：**GitHub 标**
 - **本地账本**：每个请求的 token 由本扩展自己记账，不依赖中转站的用量接口；用量页的趋势、Sankey、汇总都来自这份账本。也可填 `usagePath` 走中转站的额度接口（kiro2cc-proxy 风格或 New-API 风格）。
 - **Context Usage 弹层**：Kiro 底栏的 Context Usage 悬停弹层显示**真实模型窗口**（来自 CPS 报给 Kiro 的 `tokenLimits.maxInputTokens`，例如 1M）与六类分项占用（Your prompts / Kiro responses / Session files / Built-in tools / MCP tools / Steering files），不再是反推出来的假窗口。
 - **上下文挡位**（4.13.55）：每个已勾选模型按渠道字段 / 厂商目录 / models.dev / 用户覆盖算出「已知最大 / 候选挡位 / 当前生效」。聊天框 Effort 右侧有「Ctx」下拉，面板模型页每行、设置页「上下文」卡是同一套数据；选小一档后 Kiro 按新窗口算 80% / 95% 压缩阈值。覆盖写在用户级设置 `api2kiroDual.contextWindowOverrides`。
+  - **（4.13.61）修一处口径分歧**：原先 CPS 广播、侧边栏下拉、流式占用百分比三条路径各算各的窗口 —— 流式那条只查 models.dev，**不看**用户覆盖 / 厂商目录 / Codex 订阅口径。于是 Codex 系模型上 CPS 报 272K、百分比却按目录的 1.05M 算（差 3.86 倍），永远到不了 80% 阈值 → 上下文无界增长。现在三条路径统一走 `modelStore.resolveWindowForGroup()`，同名重复函数已删除。
+  - Kiro 侧机制（1.0.437 bundle 实证）：`SummarizationDetectionNode` 读流式响应里的 `contextUsageEvent.contextUsagePercentage`，**≥ 80% 摘要、≥ 95% 即时截断** —— 报多大的窗口，Kiro 就在多大的上下文处压缩。
 - **爆窗口压缩**（4.13.55）：上游因输入过长返回 400 / 413 / 422 时，本机代理回给 Kiro 官方溢出异常，触发 Kiro 自己的截断式摘要而不是红字 `Upstream 400`。
 - **Sankey 第 6 层**（4.13.57）：Token 维把输入再分到六类上下文；缓存读 / 缓存写 / 输出各一直通到最后一层。图下有路径节点条，可逐层显隐（至少保留两层）。
 - **MCP / 子代理**（4.13.57）：设置页直接读写 Kiro 的 `mcp.json` 与自定义 agent 文件（`~/.kiro/agents`、工作区 `.kiro/agents`），不另存副本；写前备份、原子替换，外部改动约 300 ms 回推到面板。
