@@ -15,6 +15,7 @@ antigravity.secret
 kiro2cc-proxy/**
 _probe/**
 scripts/**
+dev/**
 *.vsix
 *.zip
 .git/**
