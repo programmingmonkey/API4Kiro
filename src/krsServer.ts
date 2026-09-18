@@ -171,6 +171,8 @@ interface DispatchOpts {
   fallback?: ImageFallback;
   /** 本次请求选中的凭证（key 池里的一把；单凭证 provider 就是它唯一的那把）。 */
   credential: Credential;
+  /** 本次请求所属会话（Kiro 的 conversationId）。上游要会话级稳定 id 的头（OpenCode Go）靠它。 */
+  convId: string;
   /** 带图发出，且图片支持是用户手动钉成「支持」的（被拒时提示里要点明）。 */
   forcedImage?: boolean;
   /** Kiro 发来的原始请求头（Kiro 官方直通要整套镜像过去）。 */
@@ -624,7 +626,7 @@ export class KrsProxyServer {
 
     const rawContextBreakdown = extractRawContextBreakdown(parsed);
     const version = this.context.extension.packageJSON.version || "0.0.0";
-    const dispatch: DispatchOpts = { notice, fallback, credential, forcedImage, inHeaders, rawContextBreakdown, client };
+    const dispatch: DispatchOpts = { notice, fallback, credential, convId, forcedImage, inHeaders, rawContextBreakdown, client };
     if (provider.protocol === "kiro") {
       await this.dispatchKiro(res, request, convId, kiroModel, provider, version, dispatch);
     } else if (provider.protocol === "gemini") {
@@ -641,17 +643,20 @@ export class KrsProxyServer {
   /**
    * 上游请求头（用指定凭证）。key 类：协议鉴权头 + 我们的 X-Client；OAuth 类：厂商规定的整套头
    * （Bearer / 账号 id / UA / 设备 id…），不再附加自报家门的 X-Client，免得被当成异常客户端。
+   *
+   * `sessionKey` = 本次会话 id，透传给 authHeaders 造「上游要求客户端自己发、且同会话内稳定」的头
+   * （OpenCode Go 的 x-opencode-session）。
    */
-  private upstreamHeaders(provider: ProviderConfig, version: string, cred: Credential, inHeaders?: http.IncomingHttpHeaders): Record<string, string> {
+  private upstreamHeaders(provider: ProviderConfig, version: string, cred: Credential, inHeaders?: http.IncomingHttpHeaders, sessionKey?: string): Record<string, string> {
     if (provider.protocol === "kiro") {
-      return this.kiroHeaders(provider, cred, inHeaders);
+      return this.kiroHeaders(provider, cred, inHeaders, sessionKey);
     }
     if (isOAuthProvider(provider)) {
-      return { "Content-Type": "application/json", ...authHeaders(provider, true, cred), Accept: "text/event-stream" };
+      return { "Content-Type": "application/json", ...authHeaders(provider, true, cred, sessionKey), Accept: "text/event-stream" };
     }
     return {
       "Content-Type": "application/json",
-      ...authHeaders(provider, false, cred),
+      ...authHeaders(provider, false, cred, sessionKey),
       Accept: "text/event-stream",
       "X-Client": "api2kiro-dual/" + version,
     };
@@ -662,9 +667,9 @@ export class KrsProxyServer {
    * x-amzn-kiro-agent-mode / x-amzn-codewhisperer-optout / amz-sdk-* …），只去掉逐跳头与压缩协商，
    * 再用该凭证的 token 换掉 Authorization。厂商给的合成头只做兜底（Kiro 没带时才用）。
    */
-  private kiroHeaders(provider: ProviderConfig, cred: Credential, inHeaders?: http.IncomingHttpHeaders): Record<string, string> {
+  private kiroHeaders(provider: ProviderConfig, cred: Credential, inHeaders?: http.IncomingHttpHeaders, sessionKey?: string): Record<string, string> {
     const drop = new Set(["host", "connection", "keep-alive", "content-length", "transfer-encoding", "authorization", "accept-encoding", "te", "upgrade", "cookie", "proxy-authorization", "proxy-connection"]);
-    const h: Record<string, string> = { ...authHeaders(provider, true, cred) };
+    const h: Record<string, string> = { ...authHeaders(provider, true, cred, sessionKey) };
     for (const [k, v] of Object.entries(inHeaders || {})) {
       const key = k.toLowerCase();
       const val = Array.isArray(v) ? v[0] : v;
@@ -687,14 +692,14 @@ export class KrsProxyServer {
   }
 
   /** OAuth 类 provider 的 401 兜底：对当前凭证强制刷新一次 token，给出新请求头。 */
-  private authRetry(provider: ProviderConfig, version: string, inHeaders?: http.IncomingHttpHeaders): RetryOpts["onAuthRejected"] {
+  private authRetry(provider: ProviderConfig, version: string, opts: DispatchOpts): RetryOpts["onAuthRejected"] {
     if (!isOAuthProvider(provider)) {
       return undefined;
     }
     return async (cred) => {
       try {
         await ensureAccessToken(provider, true, cred);
-        return this.upstreamHeaders(provider, version, cred, inHeaders);
+        return this.upstreamHeaders(provider, version, cred, opts.inHeaders, opts.convId);
       } catch (e) {
         error(`[${provider.name}] 401 后刷新登录失败:`, (e as Error).message);
         return undefined;
@@ -703,7 +708,7 @@ export class KrsProxyServer {
   }
 
   /** key 池换凭证后的请求头：OAuth 类先把该凭证 token 刷新鲜，刷不了返回 undefined 让调度器继续换。 */
-  private headersFor(provider: ProviderConfig, version: string, inHeaders?: http.IncomingHttpHeaders): RetryOpts["headersFor"] {
+  private headersFor(provider: ProviderConfig, version: string, opts: DispatchOpts): RetryOpts["headersFor"] {
     if (!hasPool(provider)) {
       return undefined;
     }
@@ -716,7 +721,7 @@ export class KrsProxyServer {
           return undefined;
         }
       }
-      return this.upstreamHeaders(provider, version, cred, inHeaders);
+      return this.upstreamHeaders(provider, version, cred, opts.inHeaders, opts.convId);
     };
   }
 
@@ -725,10 +730,11 @@ export class KrsProxyServer {
     return {
       notice: opts.notice,
       credential: opts.credential,
+      convId,
       forcedImage: opts.forcedImage,
       onImageRejection: opts.fallback ? async () => JSON.stringify(await build(stripImages(opts.fallback!.original))) : undefined,
-      onAuthRejected: this.authRetry(provider, version, opts.inHeaders),
-      headersFor: this.headersFor(provider, version, opts.inHeaders),
+      onAuthRejected: this.authRetry(provider, version, opts),
+      headersFor: this.headersFor(provider, version, opts),
       fallback: opts.fallback,
       client: opts.client,
       meta: { provider, credential: opts.credential, kiroModel: baseModelId(kiroModel), upstreamModel, convId, startedAt: Date.now(), rawContextBreakdown: opts.rawContextBreakdown },
@@ -781,7 +787,7 @@ export class KrsProxyServer {
     };
     const body = await build(parsed, opts.credential);
     const targetUrl = urlFor(opts.credential);
-    const headers = this.upstreamHeaders(provider, version, opts.credential, opts.inHeaders);
+    const headers = this.upstreamHeaders(provider, version, opts.credential, opts.inHeaders, opts.convId);
     const model = body.conversationState?.currentMessage?.userInputMessage?.modelId || kiroModel;
 
     info(`→ [${provider.name}${this.credTag(provider, opts.credential)}] kiro passthrough model=${model} (kiro=${kiroModel}) conv=${convId}`);
@@ -828,7 +834,7 @@ export class KrsProxyServer {
     };
     const body = await build(parsed);
     const targetUrl = resolveApiUrl(provider, "/messages");
-    const headers = this.upstreamHeaders(provider, version, opts.credential);
+    const headers = this.upstreamHeaders(provider, version, opts.credential, undefined, opts.convId);
 
     info(
       `→ [${provider.name}${this.credTag(provider, opts.credential)}] /messages [${official ? "official" : "kiro"}] model=${body.model} (kiro=${kiroModel}${effortInfo}) conv=${convId}`
@@ -862,7 +868,7 @@ export class KrsProxyServer {
     };
     const body = await build(parsed);
     const targetUrl = resolveApiUrl(provider, "/chat/completions");
-    const headers = this.upstreamHeaders(provider, version, opts.credential);
+    const headers = this.upstreamHeaders(provider, version, opts.credential, undefined, opts.convId);
 
     info(
       `→ [${provider.name}${this.credTag(provider, opts.credential)}] /chat/completions model=${body.model} (kiro=${kiroModel}` +
@@ -892,7 +898,7 @@ export class KrsProxyServer {
     };
     const body = await build(parsed);
     const targetUrl = resolveApiUrl(provider, "/responses");
-    const headers = this.upstreamHeaders(provider, version, opts.credential);
+    const headers = this.upstreamHeaders(provider, version, opts.credential, undefined, opts.convId);
 
     info(
       `→ [${provider.name}${this.credTag(provider, opts.credential)}] /responses model=${body.model} (kiro=${kiroModel}` +
@@ -938,7 +944,7 @@ export class KrsProxyServer {
     const targetUrl = isAntigravity
       ? provider.baseUrl.replace(/\/+$/, "") + "/v1internal:streamGenerateContent?alt=sse"
       : resolveApiUrl(provider, `/models/${encodeURIComponent(model)}:streamGenerateContent`) + "?alt=sse";
-    const headers = this.upstreamHeaders(provider, version, opts.credential);
+    const headers = this.upstreamHeaders(provider, version, opts.credential, undefined, opts.convId);
 
     info(`→ [${provider.name}${this.credTag(provider, opts.credential)}] ${isAntigravity ? "antigravity" : "gemini"} model=${model} (kiro=${kiroModel}) conv=${convId}`);
     debug("upstream request", { url: targetUrl, body });

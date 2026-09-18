@@ -27,6 +27,7 @@ import { flushTokens, initTokenStore } from "./oauth/tokenStore";
 import { setOAuthClientVersion } from "./oauth/vendors";
 import { cancelAllLogins } from "./oauth";
 import { initIdentityKey } from "./identityKey";
+import { initClientIdentity } from "./clientIdentity";
 
 let krsServer: KrsProxyServer | undefined;
 let cpsServer: CpsProxyServer | undefined;
@@ -46,6 +47,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   initEndpoints(context);
   // 学到的"纯文本模型"名单也落 globalState，重启后不必再被 400 一次。
   initImagePolicy(context);
+  // 自报家门的 UA + 安装级会话前缀：上游要 x-opencode-session 的通道（OpenCode Go）靠它，纯内存操作。
+  initClientIdentity(context);
   // 模型能力目录（models.dev）：后台异步拉取，不阻塞激活。
   initModelCatalog(context);
   initCodexCatalog(context);

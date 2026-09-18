@@ -19,6 +19,7 @@ import { warn } from "./log";
 import { getToken, hasToken } from "./oauth/tokenStore";
 import { ANTHROPIC_URLS, ANTIGRAVITY_URLS, CODEX_URLS, KIMI_URLS, KIRO_URLS, VendorSpec, XAI_URLS, getVendor } from "./oauth/vendors";
 import { CatalogProvider, catalogProvider, catalogProviders } from "./modelCatalog";
+import { clientUserAgent, sessionIdFor } from "./clientIdentity";
 
 /**
  * 上游协议：anthropic=/v1/messages；openai=/chat/completions 或 /responses（见 openaiApi）；
@@ -1191,8 +1192,53 @@ export function resolveRootUrl(p: ProviderConfig, apiPath: string): string {
 /**
  * 该 provider 用某把凭证的鉴权头（缺省首条）。OAuth 类用缓存里的 token 按厂商规则造头
  * （调用方在请求前应先 `ensureAccessToken` 让它新鲜）；key 类按协议给 Bearer / x-api-key。
+ *
+ * `sessionKey` 是本次请求所属的会话 id（Kiro 的 conversationId）。只有少数上游要它
+ * （见 clientRequiredHeaders），但**所有**发往上游的请求头都从这里出，所以在这里统一合并，
+ * 聊天、测活、拉模型列表四条路径不会漏。
  */
-export function authHeaders(p: ProviderConfig, stream = false, cred?: Credential): Record<string, string> {
+export function authHeaders(p: ProviderConfig, stream = false, cred?: Credential, sessionKey?: string): Record<string, string> {
+  return { ...baseAuthHeaders(p, stream, cred), ...clientRequiredHeaders(p, sessionKey) };
+}
+
+/**
+ * 上游**要求客户端自己发**的头，缺了就直接 400。按地址认端点、而不是按预设 id：
+ * 用户手填地址、从别处（CC Switch）导入、或以后 models.dev 改了条目，都还能命中同一个端点。
+ * 目前表里只有 OpenCode Go 一家。
+ */
+function clientRequiredHeaders(p: ProviderConfig, sessionKey?: string): Record<string, string> {
+  if (!isOpencodeGo(p)) {
+    return {};
+  }
+  // OpenCode Go 的硬要求：会话 id 必须在同一会话内稳定（路由亲和 + 提示缓存），
+  // 且客户端得自报家门（它明确不要通用 SDK / HTTP 库的 UA）。
+  return { "x-opencode-session": sessionIdFor(sessionKey), "User-Agent": clientUserAgent() };
+}
+
+/**
+ * 是不是 OpenCode Go 通道（opencode.ai/zen/go）。
+ *
+ * 只认 /zen/go：同域同源的另一条通道 opencode.ai/zen/v1（Zen 本体）不要求这个头，别顺带发过去。
+ * 预设建出来的（presetId = md:opencode-go）地址被改到自建中转时照样算——要求跟的是这条通道，
+ * 不是那个域名。
+ */
+function isOpencodeGo(p: Pick<ProviderConfig, "baseUrl" | "presetId">): boolean {
+  if (p.presetId === "md:opencode-go") {
+    return true;
+  }
+  const m = /^https?:\/\/([^/?#]+)([^?#]*)/i.exec(p.baseUrl || "");
+  if (!m) {
+    return false;
+  }
+  const host = m[1].toLowerCase().replace(/:\d+$/, "");
+  if (host !== "opencode.ai" && host !== "www.opencode.ai") {
+    return false;
+  }
+  return /^\/zen\/go(\/|$)/i.test(m[2] || "");
+}
+
+/** 协议自带的鉴权头（不含上游额外要求的客户端头，见 authHeaders）。 */
+function baseAuthHeaders(p: ProviderConfig, stream = false, cred?: Credential): Record<string, string> {
   const c = cred || credentialsOf(p)[0];
   if (isOAuthProvider(p)) {
     // 地址不是厂商规格宿主 → 不造任何带 token 的头（上层 isProviderUsable / ensureAccessToken 已先拦，这里是最后一道）

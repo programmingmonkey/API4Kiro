@@ -73,6 +73,8 @@ kiro --install-extension api2kiro-dual-<version>.vsix --force
 
 每个渠道可单独设置：协议与子模式（`anthropic` 的 kiro 深度兼容 / official 直通；`openai` 的 chat / responses）、精确前缀 `exactBase`、模型 ID 映射 `modelMapping`、能力覆盖 `modelOverrides`（图片 / 推理）、白名单 `enabledModels`、兜底模型、Logo。面板里还能对草稿渠道**测延迟 / 拉取模型 / 测活**（并发 3，可达但报错的用黄色标出）。
 
+少数渠道还要求客户端自带特定请求头，本扩展自动补上、无需手配 —— **OpenCode Go**（`opencode.ai/zen/go`）要求 `x-opencode-session`，否则一律 400 `Request is missing x-opencode-session and cannot be routed efficiently`，于是填对 Key 也连不上（**4.13.62** 修）。会话 id 由「安装级随机前缀 + Kiro 的会话 id」拼成：同一会话每轮一致（上游靠它做路由亲和与提示缓存），不同会话 / 不同安装互不相同；同时在发往该通道的请求上补一个自报家门的 `User-Agent`（Node 的 `http` 默认不发 UA，之前在上游眼里是匿名客户端）。同域另一条通道 Zen 本体（`opencode.ai/zen/v1`）不需要这个头，不会被顺带发过去。命中判断认端点（预设 `md:opencode-go`，或 host 为 `opencode.ai` 且路径为 `/zen/go`），所以预设地址被改到自建中转时同样生效；纯手填的**其它域名**中转不在命中范围内。
+
 > **凭据去向受控**：代理开关与含 Key / 端点的设置项（`enabled`、`providers`、`apiKey`、`baseUrl`、`officialBaseUrl`、`officialApiKey`、`openaiBaseUrl`、`openaiApiKey`、`usagePath`）只在**用户设置**里生效，仓库里的 `.vscode/settings.json` 不能覆盖它们，也不参与 Settings Sync。OAuth 渠道的账号 token 默认只发往厂商规格地址（登录时写入的 `baseUrl` 所在主机，如 `api.anthropic.com`、`chatgpt.com`、`runtime.<region>.kiro.dev`）；`baseUrl` 被改到别的主机时不发 token、该渠道显示为不可用并说明原因。确需经自建中转转发，在用户设置里给该渠道加 `"allowCustomHost": true`。本扩展不支持受限模式（未信任）工作区——信任工作区后才会激活。
 
 ## 侧边栏面板
