@@ -199,8 +199,9 @@ export class CpsProxyServer {
       // 这里报的 maxInputTokens = 生效窗口，它决定两件事：
       //   ① 模型选择器 /「上下文」下拉的挡位；
       //   ② 占用百分比的基准 —— 而 **Kiro 确实按这个百分比触发压缩**：
-      //      SummarizationDetectionNode（Kiro 1.0.437 bundle 里的 Oxo/KJl，读的是
-      //      contextUsageEvent.contextUsagePercentage）在 >= 80% 触发摘要、>= 95% 触发即时截断。
+      //      SummarizationDetectionNode（Kiro 1.0.437 定位、1.1.14 复核：`KJl()`，读的是
+      //      contextUsageEvent.contextUsagePercentage）在 >= 80% 触发摘要、>= 95% 触发即时截断；
+      //      1.1.14 起还会把待回灌的工具结果折成百分比叠加后再判（`Pxo()`）。
       //      ⇒ 报多大的窗口，Kiro 就在多大的上下文处压缩。调小它 = 让 Kiro 更早压缩。
       //
       // ⚠️ 两条历史教训，别重蹈：

@@ -1,6 +1,7 @@
 /**
  * Kiro MCP 配置直管：读写 Kiro 自己的 `mcp.json`（用户级 `~/.kiro/settings/mcp.json`、工作区级
- * `<workspaceFolder>/.kiro/settings/mcp.json`），不另存副本。Kiro（1.0.437 副本核实）用 comment-json 解析这两份文件、
+ * `<workspaceFolder>/.kiro/settings/mcp.json`），不另存副本。Kiro（1.0.437 副本核实、1.1.14 路径复核：
+ * `fG()` = `~/.kiro`，再拼 `settings/mcp.json`）用 comment-json 解析这两份文件、
  * 用 chokidar 监视并在 300 ms 防抖后重连有变化的服务器，所以这里只管把文件写对，不调 Kiro 命令。
  *
  * 读：去 BOM → 字符串感知地去掉 `//` / `/* *\/` 注释与尾逗号 → `JSON.parse`；解析失败只报错、不写、不清空。
@@ -75,7 +76,16 @@ export class McpConfigError extends Error {
 export const MCP_FILE = "mcp.json";
 export const MCP_BACKUP_SUFFIX = ".api4kiro.bak";
 
-/** Kiro 1.0.437（kiroAgent 1.0.794）注册的相关命令与设置键（只读副本核实）。 */
+/**
+ * Kiro 注册的相关命令与设置键（1.0.437 只读副本核实，1.1.14 复核仍在）。
+ *
+ * ⚠️ **1.1.14 起 autoApprove 的生效位置变了。** Kiro 1.1.14 首次激活时会把 mcp.json 里的
+ * `autoApprove`（用户级 + 工作区级 + powers 各一份，`readMcpAutoApprove`）**一次性翻译**成新的
+ * 权限规则（`translateMcpServers` → `{capability:"mcp", match:["<server>/<tool>"], effect:"allow"}`），
+ * 写进权限文件（入口命令 `kiroAgent.openPermissionsUser`），并在 `.kiro/` 下落迁移标记防重复。
+ * 之后 Kiro 的批准判据以权限文件（Trust v2）为准：mcp.json 的 `autoApprove` 字段仍被解析、也仍会
+ * 带进 MCP 连接配置，但**迁移之后再改它不一定改变实际批准行为**。面板里改免确认工具时要想到这一点。
+ */
 export const KIRO_MCP = {
   openUserConfig: "kiroAgent.openUserMcpConfig",
   openWorkspaceConfig: "kiroAgent.openWorkspaceMcpConfig",

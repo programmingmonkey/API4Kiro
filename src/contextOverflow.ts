@@ -1,7 +1,7 @@
 /**
  * 上游「上下文超长」判定与回给 Kiro 的异常形状（4.13.55，目标 B）。
  *
- * Kiro 1.0.437 的被动恢复性压缩只在异常被判定为「上下文溢出」时才走：
+ * Kiro 的被动恢复性压缩只在异常被判定为「上下文溢出」时才走（1.0.437 定位、1.1.14 复核：同一套分类与判定）：
  *  - `Bfe`（错误分类）：`ValidationException` 且 `reason === "CONTENT_LENGTH_EXCEEDS_THRESHOLD"`，或 message 命中
  *    `kAr`（`input is too long` / `prompt is too long` / `input content length exceeds threshold`）→ `Dfe`
  *    （name `ContextWindowExceededError`，CLIENT_ERROR，不进 TRANSIENT 重试）；
@@ -124,8 +124,9 @@ export function contextOverflowException(status: number, text: string, maxUpstre
  * ❌ 正文里给用户的一句话（与异常帧同时发出）。
  *
  * 「把该模型的『上下文』挡位调低」这条建议**是有效的**，不要删：Kiro 按插件上报的占用百分比
- * （= tokens ÷ 生效窗口）在 **>= 80% 触发摘要、>= 95% 触发截断**（1.0.437 bundle 里的
- * SummarizationDetectionNode / Oxo 实证），所以调低窗口确实会让 Kiro 更早压缩，
+ * （= tokens ÷ 生效窗口）在 **>= 80% 触发摘要、>= 95% 触发截断**（1.0.437 定位、1.1.14 复核：
+ * SummarizationDetectionNode `KJl()` / 阈值 `Oxo()`，1.1.14 另把待回灌工具结果按 `Pxo()` 叠加），
+ * 所以调低窗口确实会让 Kiro 更早压缩，
  * 从而降低再次撞上游上限的概率。
  *
  * 曾经误删过这条建议——依据是一份有混淆因素的推断（用 Codex 系模型当反例，而它恰好是

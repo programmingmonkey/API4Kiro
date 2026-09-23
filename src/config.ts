@@ -60,7 +60,7 @@ interface LayeredValue {
  * 只取用户级（Global）值，没有则取默认值。
  *
  * package.json 已把这些项声明为 `scope: machine`，工作台解析工作区文件时本就跳过它们（Kiro 1.0.437
- * `dq=[4,5,6,7]` 不含 MACHINE）；这里是纵深防御——旧版工作台或任何把工作区值送达扩展的路径都不会让
+ * `dq=[4,5,6,7]` 不含 MACHINE，1.1.14 复核同一形态）；这里是纵深防御——旧版工作台或任何把工作区值送达扩展的路径都不会让
  * 仓库里的 `.vscode/settings.json` 决定凭据发往哪里。`inspect` 不可用（桩 / 异常）时退回合并读取，
  * 与改动前逐字相同。返回 `shadowed` 让调用方决定是否记一条日志（本模块不引入 log，避免 config ↔ log 环）。
  */

@@ -197,6 +197,17 @@ function main() {
     for (const pk of fx.packages) {
       check(`P13 ${pk.pkg} chunk 已打补丁`, read(pk.chunk).includes("a2k-model-name-box"), "仍是工厂态（该视图会直接显示 __A2K_ 微格式）");
       check(`P13 ${pk.pkg} style.css 上了 CARD_CSS`, read(pk.style).includes("a2k-model-row"), "该 package 的 style.css 没有 a2k CSS");
+      // 拼接式注入（函数插在标签后、调用处替换、弹层整函数替换）出错时整个 webview 会加载失败，
+      // 而上面两条 `includes` 断言照样 PASS。用 node --check 解析一次打补丁后的 chunk。
+      const syntaxTmp = path.join(WORK, `syntax-${pk.pkg}.mjs`);
+      fs.writeFileSync(syntaxTmp, read(pk.chunk), "utf8");
+      let parses = true;
+      try {
+        execFileSync(process.execPath, ["--check", syntaxTmp], { stdio: "pipe" });
+      } catch {
+        parses = false;
+      }
+      check(`P13 ${pk.pkg} 打过补丁的 chunk 仍是合法 JS`, parses, "拼接错位会让整个 webview 加载失败");
     }
 
     section("P14 落地守卫：模板里的单参调用 (X) 不是参数声明");
@@ -217,6 +228,318 @@ function main() {
         !!span && M.renderMatched(P.PATCHED_JS_CODE, P.ORIG_JS_PATTERN, span) !== null,
         "该视图会直接显示 __A2K_ 微格式"
       );
+    }
+
+    section("P15 每个承载模型选择器的 package 都必须能注入聊天框「上下文」下拉，且注入段能真的渲染");
+    {
+      // 2026-09-23 实机事故：`resolveTaggedName` 把名字助手写死成 `a(`，而 session-details 那份
+      // 是 `o(C1,"useSessionConfig")` → useSessionConfig 恒判「未命中」→ 该视图整体不注入 Ctx 下拉
+      // （用户看到的现象：选不了上下文容量）。修完又暴露第二层：模板自己的局部短名（`const k`）
+      // 与真机 jsx 运行时名（session-details 是 `k`）撞名，被 namesCollide 拒。
+      // 因此这里两件事都要守：**每个 package 都能注入**，且注入段**跑得起来**（桩 jsx + 桩 useSessionConfig）。
+      const jsxStub = { jsx: (type, props, key) => ({ type, props: props || {}, key }), Fragment: Symbol("Fragment") };
+      jsxStub.jsxs = jsxStub.jsx;
+      const findCls = (node, cls) => {
+        if (!node || typeof node !== "object") return null;
+        if (node.props && node.props.className === cls) return node;
+        const kids = node.props && node.props.children;
+        for (const k of Array.isArray(kids) ? kids : kids === undefined || kids === null ? [] : [kids]) {
+          const hit = findCls(k, cls);
+          if (hit) return hit;
+        }
+        return null;
+      };
+      const collectOptions = (node, out = []) => {
+        if (!node || typeof node !== "object") return out;
+        if (node.type === "option") out.push(node.props.value);
+        const kids = node.props && node.props.children;
+        for (const k of Array.isArray(kids) ? kids : kids === undefined || kids === null ? [] : [kids]) collectOptions(k, out);
+        return out;
+      };
+      /** 选项显示文案与 optgroup 标签：文案回归（a2kFmt）与「有没有 auto 组」都靠它断言。 */
+      const collectLabels = (node, out = { options: [], groups: [] }) => {
+        if (!node || typeof node !== "object") return out;
+        if (node.type === "option") out.options.push(String(node.props.children));
+        if (node.type === "optgroup") out.groups.push(String(node.props.label));
+        const kids = node.props && node.props.children;
+        for (const k of Array.isArray(kids) ? kids : kids === undefined || kids === null ? [] : [kids]) collectLabels(k, out);
+        return out;
+      };
+      const render = (segment, jsxName, uscName, options, calls) => {
+        const fn = new Function(jsxName, uscName, `${segment}\nreturn a2kCtxSel;`);
+        return fn(jsxStub, () => [options, (id, v) => calls.push([id, v])]);
+      };
+      // 与 CPS 真实广播同形：6 段（末位是末行标记）
+      const micro = "__A2K_MDL__|1|1|272000|32768,65536,131072,200000,262144,272000~codex~1~272000~codex|0";
+      const cfgOf = (description) => [
+        {
+          category: "model",
+          type: "select",
+          currentValue: "gpt-5.6-terra",
+          options: [{ value: "gpt-5.6-terra", name: "gpt-5.6-terra", ...(description === undefined ? {} : { description }) }],
+        },
+      ];
+      for (const pk of fx.packages) {
+        const factory = pk.factoryChunk;
+        const applied = M.applyCtxSelector(factory);
+        check(`P15 ${pk.pkg} 能注入 Ctx 下拉`, !!applied, "该视图的「上下文」下拉会整体消失（用户选不了上下文容量）");
+        check(`P15 ${pk.pkg} 注入段带定界标记`, !!applied && applied.includes(M.CTX_START) && applied.includes(M.CTX_END));
+        if (!applied) continue;
+        // 定界段：用导出常量切，别在这儿再写一遍标记字面量（两处会漂）
+        const segStart = applied.indexOf(M.CTX_START);
+        const segEnd = applied.indexOf(M.CTX_END, segStart + M.CTX_START.length);
+        const segInner = segStart >= 0 && segEnd > segStart ? applied.slice(segStart + M.CTX_START.length, segEnd) : null;
+        check(`P15 ${pk.pkg} 定界段可取`, !!segInner);
+        if (!segInner) continue;
+        // 光有函数体不够：真正让下拉出现在聊天框里的是**调用处接线**（Fragment 包一层，全文只引用一次 a2kCtxSel）。
+        // 只查函数体的话，把调用处扔掉照样全绿（实测），而用户看到的正是「没有下拉」。
+        const wired = M.applySelectorScript(factory);
+        const wireSites = (wired.match(/a2kCtxSel,/g) || []).length;
+        check(`P15 ${pk.pkg} 调用处已接线（a2kCtxSel 被引用 1 次）`, wireSites === 1, `引用次数 ${wireSites}`);
+        // 真机实际名：jsx 运行时来自 EffortSelector 调用处，useSessionConfig 来自标签反查
+        const eff = M.findEffortSelector(factory);
+        const effCall = eff ? M.findEffortSelectorCall(factory, eff.fn) : null;
+        const jsxName = effCall ? effCall.jsx : null;
+        const uscName = M.resolveTaggedName(factory, "useSessionConfig");
+        check(
+          `P15 ${pk.pkg} 能反查 jsx=${jsxName} / useSessionConfig=${uscName}`,
+          !!effCall && !!jsxName && !!uscName,
+          `effCall=${!!effCall} jsx=${jsxName} usc=${uscName}`
+        );
+        if (!effCall || !jsxName || !uscName) continue;
+        const calls = [];
+        const tree = render(segInner, jsxName, uscName, cfgOf(micro), calls)({});
+        const sel = findCls(tree, "a2k-ctx-select");
+        check(`P15 ${pk.pkg} 渲染出 <select class="a2k-ctx-select">`, !!sel);
+        if (!sel) continue;
+        check(`P15 ${pk.pkg} defaultValue = 生效窗口 272000`, sel.props.defaultValue === "272000", String(sel.props.defaultValue));
+        check(`P15 ${pk.pkg} disabled 透传（未禁用时为 false）`, sel.props.disabled === false, String(sel.props.disabled));
+        const optValues = collectOptions(sel);
+        check(
+          `P15 ${pk.pkg} 挡位候选 = 6 档（含 32768 / 272000）`,
+          optValues.length === 6 && optValues.includes("32768") && optValues.includes("272000"),
+          JSON.stringify(optValues)
+        );
+        // 文案与分组也要断言：a2kFmt 正是当年撞 `const k` 的那段代码，只查 value 对它的回归完全不敏感。
+        const optLabels = collectLabels(sel);
+        check(
+          `P15 ${pk.pkg} 挡位文案按 1024 / 1000 进制（272000→272K、131072→128K）`,
+          optLabels.options.includes("272K") && optLabels.options.includes("128K"),
+          JSON.stringify(optLabels.options)
+        );
+        check(
+          `P15 ${pk.pkg} 有 auto 组时分组为 auto+manual`,
+          optLabels.groups.length === 2 && optLabels.groups[0].startsWith("auto ("),
+          JSON.stringify(optLabels.groups)
+        );
+        // 解析值不在候选里（微格式第 4 位缺失 / 越界）→ 没有 auto 组：给用户的是纯挡位表
+        const noAuto = render(
+          segInner,
+          jsxName,
+          uscName,
+          cfgOf("__A2K_MDL__|1|1|272000|32768,65536~codex~1~999999~codex|0"),
+          []
+        )({});
+        check(`P15 ${pk.pkg} 解析值不在候选里时不出现 auto 组`, collectLabels(noAuto).groups.length === 0, JSON.stringify(collectLabels(noAuto).groups));
+        sel.props.onChange({ target: { value: "200000" } });
+        check(
+          `P15 ${pk.pkg} 选择后发出 a2k:ctx 覆盖`,
+          calls.length === 1 && calls[0][0] === "a2k:ctx" && calls[0][1] === "gpt-5.6-terra|200000",
+          JSON.stringify(calls)
+        );
+        check(`P15 ${pk.pkg} disabled=true 时下拉禁用`, findCls(render(segInner, jsxName, uscName, cfgOf(micro), [])({ disabled: true }), "a2k-ctx-select")?.props.disabled === true);
+        check(`P15 ${pk.pkg} 非本扩展列表（无微格式）不渲染`, render(segInner, jsxName, uscName, cfgOf(undefined), [])({}) === null);
+        check(`P15 ${pk.pkg} 微格式不足 6 段不渲染`, render(segInner, jsxName, uscName, cfgOf("__A2K_MDL__|1|1|272000"), [])({}) === null);
+      }
+    }
+
+    section("P16 Context Usage 弹层：该注入的必须真的注入，该跳过的必须说清为什么");
+    {
+      // 弹层是可选组，两种跳过都算设计内：① 结构不同（1.1.14 的 session-details 把 body 重构成
+      // children:[header,breakdown]）；② 命中工厂但真机 jsx 运行时名不是 `b`（applyPopover 的守卫，
+      // 防写出指向不存在标识符的 `b.jsx(...)`）。缺的是第三种：「命中且守卫放行却静默没注入」。
+      const applied = read(mermaidFile);
+      const fac = M.findPopoverFactory(factoryMermaid);
+      const jsxOk = !!fac && fac.span.map.get("b") === "b";
+      check("P16 agent-chat 命中弹层工厂", !!fac);
+      check("P16 agent-chat jsx 运行时名是 b（守卫放行）", jsxOk);
+      check(
+        "P16 agent-chat 弹层已注入（a2k-cu-head + a2kUsage 传参）",
+        applied.includes("a2k-cu-head") && /,a2kUsage:(?:typeof [A-Za-z_$][\w$]*==="undefined"\?void 0:)?[A-Za-z_$][\w$]*\}\)/.test(applied),
+        "弹层补丁没落地（视图会退回原生三项百分比）"
+      );
+      for (const pk of fx.packages) {
+        const f = M.findPopoverFactory(pk.factoryChunk);
+        const expectInject = !!f && f.span.map.get("b") === "b";
+        const injected = M.applySelectorScript(pk.factoryChunk).includes("a2k-cu-head");
+        check(
+          `P16 ${pk.pkg} 工厂命中=${!!f} / jsx 名=${f ? f.span.map.get("b") : "n/a"} ⇒ 注入=${injected}`,
+          injected === expectInject,
+          expectInject ? "命中且守卫放行却没注入" : "该跳过的却注入了"
+        );
+      }
+      // 合成用例：只把命中段里的 jsx 用法改名（= 守卫要拦的形态），断言弹层跳过、其余三处选择器补丁照常
+      const jsxRenamed =
+        factoryMermaid.slice(0, fac.start) +
+        fac.text.replace(/\bb\.jsxs/g, "k.jsxs").replace(/\bb\.jsx(?!s)/g, "k.jsx") +
+        factoryMermaid.slice(fac.end);
+      const renamedOut = M.applySelectorScript(jsxRenamed);
+      check("P16 工厂命中但 jsx≠b ⇒ 弹层跳过（不得写出 b.jsx 悬空引用）", !renamedOut.includes("a2k-cu-head"));
+      check("P16 弹层跳过不影响三处选择器补丁", renamedOut.includes("a2k-model-name-box"));
+    }
+
+    section("P17 名字判定守卫的边界：字面量不算撞名、标签反查必须唯一且非成员调用");
+    {
+      // namesCollide：字符串（含模板串）里的词不算「模板里的名字」。旧判据用裸 IDENT_RE，
+      // 把 CTX_SEL_FN_TEMPLATE 里 `+"M")` 这类字面量也算进去 → 真机把 jsx 压成 M 时无谓拒绝整条补丁。
+      check(
+        "P17 namesCollide 不把字符串里的词当成撞名",
+        M.namesCollide('function f(b){return b.jsx("option",{children:"M"})}', ["b"], ["M"]) === false
+      );
+      check("P17 namesCollide 仍拦代码标识符撞名", M.namesCollide("function f(b,k){return k}", ["b"], ["k"]) === true);
+      check(
+        "P17 namesCollide 仍拦属性名撞名",
+        M.namesCollide('function f(b){return b.jsx("span",{disabled:b})}', ["b"], ["disabled"]) === true
+      );
+      // resolveTaggedName：放宽助手名，但唯一性与「独立调用」不放宽
+      check("P17 窄形态唯一命中", M.resolveTaggedName('a(X,"useSessionConfig");', "useSessionConfig") === "X");
+      check("P17 宽形态唯一命中", M.resolveTaggedName('o(C1,"useSessionConfig");', "useSessionConfig") === "C1");
+      check("P17 窄形态多命中 ⇒ null", M.resolveTaggedName('a(X,"useSessionConfig");a(Y,"useSessionConfig");', "useSessionConfig") === null);
+      check("P17 宽形态多命中 ⇒ null", M.resolveTaggedName('o(X,"useSessionConfig");p(Y,"useSessionConfig");', "useSessionConfig") === null);
+      check(
+        "P17 窄宽混用 ⇒ null（不得静默挑窄的那个）",
+        M.resolveTaggedName('a(X,"useSessionConfig");o(Y,"useSessionConfig");', "useSessionConfig") === null
+      );
+      check("P17 成员调用不算标签", M.resolveTaggedName('ns.a(C1,"useSessionConfig");', "useSessionConfig") === null);
+      check("P17 未命中 ⇒ null", M.resolveTaggedName("function f(){return 1}", "useSessionConfig") === null);
+      // 已知边界：判定不扫字面量（不给每个多兆 chunk 多跑一次分词），所以字符串里的同形文本也参与计数。
+      // 后果是安全侧：多一处就唯一性失败 → null → 宁可不打，绝不挑错名字。
+      // 实测 1.1.14 两份 chunk 里 "useSessionConfig" 各只出现 1 次，当前无影响。
+      check(
+        "P17 字符串里的同形文本只让唯一性失败（安全侧跳过）",
+        M.resolveTaggedName('var s=\'a(X,"useSessionConfig");\';a(Y,"useSessionConfig");', "useSessionConfig") === null
+      );
+    }
+
+    section("P18 chunk 改名回退：承载 chunk 不再叫 mermaid-* 时仍要被找到（本次新增的回退分支）");
+    {
+      // 真机 fixture 的 assets 里只有 mermaid-*（承载文件恰好也叫 mermaid-*），所以回退分支默认不可达。
+      // 把承载 chunk 改成非 mermaid 名再同步一次：回退生效 ⇒ 仍认得出（unchanged，因为已打补丁）；
+      // 回退失效 ⇒ 该 package 一张 mermaid-* 都不带标记 → 状态报 unavailable（正是我们要拦的）。
+      const renamed = [];
+      for (const pk of fx.packages) {
+        const target = path.join(path.dirname(pk.chunk), "index-A2KFALLBACK.js");
+        fs.renameSync(pk.chunk, target);
+        renamed.push({ pk, target });
+      }
+      try {
+        const st = await S.syncGroupHeaderStyle(true);
+        check("P18 改名后仍认得出承载 chunk（不是 unavailable）", st.targets.selectorScript === "unchanged", JSON.stringify(st.targets));
+        for (const { pk, target } of renamed) {
+          check(
+            `P18 ${pk.pkg} 改名后的 chunk 仍带补丁`,
+            read(target).includes("a2k-model-name-box"),
+            "回退分支漏掉了整个视图（会显示 __A2K_ 微格式、也没有 Ctx 下拉）"
+          );
+        }
+      } finally {
+        for (const { pk, target } of renamed) {
+          if (fs.existsSync(target)) fs.renameSync(target, pk.chunk);
+        }
+        await S.syncGroupHeaderStyle(true);
+      }
+    }
+
+    section("P19 宿主转发钩子：a2k:ctx 得能进到 kiro-agent 的 setSessionConfigOption（点下拉没反应就是这里漂了）");
+    {
+      const hostFile = path.join(ROOT, "extensions/kiro.kiro-agent/dist/extension.js");
+      const hostFactory = M.restoreCtxHostHook(read(hostFile));
+      const hooked = M.applyCtxHostHook(hostFactory);
+      check("P19 宿主钩子可注入（__a2kSessionConfigOption 转发）", hooked !== hostFactory && hooked.includes("__a2kSessionConfigOption"));
+      check("P19 宿主钩子幂等（再打一次不变）", M.applyCtxHostHook(hooked) === hooked);
+      check("P19 宿主钩子可复原", M.restoreCtxHostHook(hooked) === hostFactory);
+      // 从出厂态同步一次：extras.ctxHost 必须如实报 applied（不是 unavailable / 空）
+      fs.writeFileSync(hostFile, hostFactory, "utf8");
+      const st = await S.syncGroupHeaderStyle(true);
+      check("P19 extras.ctxHost 如实上报 applied", st.extras.ctxHost === "applied", JSON.stringify(st.extras));
+      check("P19 真机文件里钩子已落地", read(hostFile).includes("__a2kSessionConfigOption"));
+    }
+
+    section("P20 A/B/C 收口：逐 package 记账、真机助手名、store 名 typeof 兜底");
+    {
+      // C：调用处写 typeof 兜底形态（store 名被压缩器改掉时退回原生三项视图，而不是抛 ReferenceError）
+      const appliedAll = read(mermaidFile);
+      check("P20 调用处用 typeof 兜底写 store", appliedAll.includes(',a2kUsage:typeof n==="undefined"?void 0:n}'), "写入形态不是 typeof 兜底");
+      const legacyForm = appliedAll.replace(/,a2kUsage:typeof [A-Za-z_$][\w$]*==="undefined"\?void 0:[A-Za-z_$][\w$]*\}\)/, ",a2kUsage:n})");
+      check(
+        "P20 旧形态（a2kUsage:n）仍能还原为出厂",
+        M.restoreSelectorScript(legacyForm) === factoryMermaid,
+        "真机上已经打过的旧补丁还原不了（下次激活会留下孤儿）"
+      );
+
+      // B：写入的 displayName 标签用真机助手名，不是模板里的规范名 `a`
+      const fac = M.findPopoverFactory(factoryMermaid);
+      check("P20 命中段读出了真机助手名", !!fac && typeof fac.tagger === "string" && fac.tagger.length > 0);
+      const appliedPopover = M.applySelectorScript(factoryMermaid);
+      check(
+        `P20 写入的标签用真机助手名 ${fac ? fac.tagger : "?"}`,
+        !!fac && appliedPopover.includes(`${fac.tagger}(${fac.names.fn},"ContextUsagePopover");`)
+      );
+      // B 合成用例：把真机助手名换成 `o`（= 1.1.14 的 session-details 那份的形态）。旧实现拿规范名 `a`
+      // 逐字比对，这里会整条不再注入；新实现必须仍注入，且能逐字还原回「改名后的出厂」。
+      const taggerRenamed = fac
+        ? factoryMermaid.replace(`${fac.tagger}(${fac.names.fn},"ContextUsagePopover");`, `o(${fac.names.fn},"ContextUsagePopover");`)
+        : factoryMermaid;
+      const renamedFac = M.findPopoverFactory(taggerRenamed);
+      check("P20 助手名改成 o 后仍能命中弹层工厂", !!renamedFac && renamedFac.tagger === "o");
+      const renamedApplied = M.applySelectorScript(taggerRenamed);
+      check("P20 助手名改成 o 后仍会注入", renamedApplied.includes("a2k-cu-head"));
+      check(
+        "P20 写入的标签跟着用 o",
+        !!renamedFac && renamedApplied.includes(`o(${renamedFac.names.fn},"ContextUsagePopover");`)
+      );
+      check(
+        "P20 改名后的补丁能逐字还原回改名后的出厂",
+        M.restoreSelectorScript(renamedApplied) === taggerRenamed,
+        "还原侧仍写死 `a`，会把标签写错"
+      );
+
+      // A（chunk 级）：一个 package 的靶点不命中 ⇒ 不许整体报 applied，detail 要点名，CSS 逐份隔离
+      {
+        const missedPkg = fx.packages[fx.packages.length - 1];
+        const keptPkg = fx.packages[0];
+        const broken = missedPkg.factoryChunk.replace('className:"chat-input-popup-option"', 'className:"chat-input-popup-optionX"');
+        check("P20 前置：破坏靶点后确实打不上", !M.applySelectorScript(broken).includes("a2k-model-name-box"));
+        fs.writeFileSync(missedPkg.chunk, broken, "utf8");
+        try {
+          const st = await S.syncGroupHeaderStyle(true);
+          check("P20 chunk 级半套：状态不得是 applied", st.status !== "applied", JSON.stringify({ status: st.status, detail: st.detail }));
+          check("P20 chunk 级半套：detail 点名漏掉的那份", !!st.detail && st.detail.includes(missedPkg.pkg), String(st.detail));
+          check("P20 chunk 级半套：detail 点名落地的那份", !!st.detail && st.detail.includes(keptPkg.pkg), String(st.detail));
+          check("P20 落地那份仍带补丁", read(keptPkg.chunk).includes("a2k-model-name-box"));
+          check("P20 落地那份保留 CARD_CSS", read(keptPkg.style).includes("a2k-model-row"));
+          check("P20 漏掉那份不落 CARD_CSS（不留半套外观）", !read(missedPkg.style).includes("a2k-model-row"));
+        } finally {
+          fs.writeFileSync(missedPkg.chunk, missedPkg.factoryChunk, "utf8");
+          await S.syncGroupHeaderStyle(true);
+        }
+      }
+
+      // A（可选组级）：一个 package 拿不到 Ctx 注入 ⇒ extras 不得报 applied（本次事故正是这形态被报成成功）
+      {
+        const missedPkg = fx.packages[fx.packages.length - 1];
+        const broken = missedPkg.factoryChunk.replace('"EffortSelector"', '"EffortSelectorRenamed"');
+        check("P20 前置：改名后该 package 注入不了 Ctx", !M.applyCtxSelector(broken));
+        fs.writeFileSync(missedPkg.chunk, broken, "utf8");
+        try {
+          const st = await S.syncGroupHeaderStyle(true);
+          check("P20 Ctx 半套注入：extras.ctxSelector 不得报 applied", st.extras.ctxSelector !== "applied", JSON.stringify(st.extras));
+          check("P20 Ctx 半套注入：其余三处靶点仍算落地", read(fx.packages[0].chunk).includes("a2k-model-name-box"));
+        } finally {
+          fs.writeFileSync(missedPkg.chunk, missedPkg.factoryChunk, "utf8");
+          await S.syncGroupHeaderStyle(true);
+        }
+      }
     }
 
     section("P11 重复同步（等同重载窗口后再激活）：不得误报 unavailable、不得把 CSS 剥掉");

@@ -1,7 +1,8 @@
 /**
  * Kiro 自定义 agent / 子代理配置文件的读写层（R28；版本停 4.13.55）。
  *
- * 事实来源（只读研究 `.verify-artifacts/agent-context-research.md` §A，Kiro 1.0.437 `kiro.kiro-agent/dist/extension.js`）：
+ * 事实来源（只读研究 `.verify-artifacts/agent-context-research.md` §A，Kiro 1.0.437 `kiro.kiro-agent/dist/extension.js`；
+ * 1.1.14 复核：目录常量 `Zm=".kiro"` / `tX="agents"` 未变，两级 `~/.kiro/agents` 与 `<root>/.kiro/agents` 仍是同一套）：
  *  - 两级目录：用户级 `~/.kiro/agents/`、工作区级 `<root>/.kiro/agents/`（每个 workspace folder 各一份），Kiro 递归扫描、
  *    只收 `.md` 与 `.json`，agentId = 相对路径去扩展名（`/` 连接），前置元数据 / JSON 的 `name` 存在时覆盖它；
  *  - `.md` = `---` YAML 前置元数据（name / description / tools / excludedTools / model / effortLevel / includeMcpJson /

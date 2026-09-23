@@ -8,7 +8,7 @@
   <a href="https://github.com/yourhoneypomelo-cell/API4Kiro/releases/latest"><img src="https://img.shields.io/github/v/release/yourhoneypomelo-cell/API4Kiro?label=release&color=7c3aed" alt="Release"></a>
   <a href="https://github.com/yourhoneypomelo-cell/API4Kiro/actions/workflows/ci.yml"><img src="https://github.com/yourhoneypomelo-cell/API4Kiro/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <a href="https://github.com/yourhoneypomelo-cell/API4Kiro/releases"><img src="https://img.shields.io/github/downloads/yourhoneypomelo-cell/API4Kiro/total?color=7c3aed" alt="Downloads"></a>
-  <img src="https://img.shields.io/badge/Kiro-1.0.411%20%E2%80%93%201.0.437-7c3aed" alt="Kiro">
+  <img src="https://img.shields.io/badge/Kiro-1.0.411%20%E2%80%93%201.1.14-7c3aed" alt="Kiro">
   <a href="LICENSE"><img src="https://img.shields.io/github/license/yourhoneypomelo-cell/API4Kiro" alt="License"></a>
 </p>
 
@@ -60,7 +60,7 @@ kiro --install-extension api2kiro-dual-<version>.vsix --force
 
 之后增删模型、调整顺序都会静默同步到 Kiro 右侧的模型选择器，不再需要重载。
 
-> 需要 Kiro IDE（本扩展声明依赖内置的 `kiro.kiroAgent`），纯 VS Code 中不会激活。已在 Kiro 1.0.411 与 1.0.437 上验证。
+> 需要 Kiro IDE（本扩展声明依赖内置的 `kiro.kiroAgent`），纯 VS Code 中不会激活。已在 Kiro 1.0.411 / 1.0.437 / 1.1.14 上验证（1.1.14 起 Kiro 把聊天界面拆到 `kiro-ui-session-details`，两份 chunk 各自独立压缩，补丁逐份覆盖）。
 
 ## 接入方式
 
@@ -117,10 +117,13 @@ Kiro 视图标题栏最右侧有两枚命令图标（4.13.56）：**GitHub 标**
 - **Context Usage 弹层**：Kiro 底栏的 Context Usage 悬停弹层显示**真实模型窗口**（来自 CPS 报给 Kiro 的 `tokenLimits.maxInputTokens`，例如 1M）与六类分项占用（Your prompts / Kiro responses / Session files / Built-in tools / MCP tools / Steering files），不再是反推出来的假窗口。
 - **上下文挡位**（4.13.55）：每个已勾选模型按渠道字段 / 厂商目录 / models.dev / 用户覆盖算出「已知最大 / 候选挡位 / 当前生效」。聊天框 Effort 右侧有「Ctx」下拉，面板模型页每行、设置页「上下文」卡是同一套数据；选小一档后 Kiro 按新窗口算 80% / 95% 压缩阈值。覆盖写在用户级设置 `api2kiroDual.contextWindowOverrides`。
   - **（4.13.61）修一处口径分歧**：原先 CPS 广播、侧边栏下拉、流式占用百分比三条路径各算各的窗口 —— 流式那条只查 models.dev，**不看**用户覆盖 / 厂商目录 / Codex 订阅口径。于是 Codex 系模型上 CPS 报 272K、百分比却按目录的 1.05M 算（差 3.86 倍），永远到不了 80% 阈值 → 上下文无界增长。现在三条路径统一走 `modelStore.resolveWindowForGroup()`，同名重复函数已删除。
-  - Kiro 侧机制（1.0.437 bundle 实证）：`SummarizationDetectionNode` 读流式响应里的 `contextUsageEvent.contextUsagePercentage`，**≥ 80% 摘要、≥ 95% 即时截断** —— 报多大的窗口，Kiro 就在多大的上下文处压缩。
+  - **（4.13.63）修「某些视图没有 Ctx 下拉」**：1.1.14 把聊天界面拆到 `kiro-ui-session-details`，那份 bundle 独立压缩，两个锚点写死在旧压缩名上 —— 该 chunk 的名字助手是 `o(` 而不是 `a(`（`useSessionConfig` 恒判未命中），且模板自带局部 `const k` 恰好撞上那份的 jsx 运行时名 `k`。两个原因都会让整条注入被拒，于是那个视图的聊天框**完全没有**「上下文」下拉。现在反查助手名按结构走、模板自有标识符全部 `a2k` 前缀化，两份 chunk 都能注入（`dev/verify-selector-patch.js` P15 逐份守卫，含「注入段真能渲染」）。
+  - **（4.13.63）补丁状态逐 package 记账**：同一份 chunk 在各 package 各一份、各自独立压缩，所以「成没成」逐份回答 —— 任一承载 package 没打上就报 `unavailable` 并点名落地 / 漏掉的 package（不再出现「一个视图有、另一个没有」却报成功），`CARD_CSS` 也只给拿到补丁的那份加；弹层的 displayName 助手名改为按结构捕获（此前写死 `a`，真机叫 `o` 时整条弹层补丁静默失效）；调用处的 store 名改成 `typeof` 兜底（被压缩器改名时退回原生三项视图，而不是让弹层崩掉）。
+  - Kiro 侧机制（**1.1.14 bundle 复核**）：`SummarizationDetectionNode` 把流式响应里的 `contextUsageEvent.contextUsagePercentage` 交给阈值函数 —— **≥ 80% 摘要、≥ 95% 即时截断**；若末尾有待回灌的工具结果，再把它的估算 token 按 `maxInputTokens` 折成百分比**叠加**上去（`Pxo`）。报多大的窗口，Kiro 就在多大的上下文处压缩。所以窗口最小的模型最先压缩：同一批会话里 1M 窗口的模型要 800K tokens 才到阈值，而 Codex / GPT 系（272K）**约 217.6K tokens 就压缩**——这是「GPT 模型动不动就压缩上下文」的全部原因，不是百分比算错（可用插件自己的账本与 Kiro 的 `Request payload: N chars` 互验，3.0–3.4 字符/token）。
 - **爆窗口压缩**（4.13.55）：上游因输入过长返回 400 / 413 / 422 时，本机代理回给 Kiro 官方溢出异常，触发 Kiro 自己的截断式摘要而不是红字 `Upstream 400`。
 - **Sankey 第 6 层**（4.13.57）：Token 维把输入再分到六类上下文；缓存读 / 缓存写 / 输出各一直通到最后一层。图下有路径节点条，可逐层显隐（至少保留两层）。
 - **MCP / 子代理**（4.13.57）：设置页直接读写 Kiro 的 `mcp.json` 与自定义 agent 文件（`~/.kiro/agents`、工作区 `.kiro/agents`），不另存副本；写前备份、原子替换，外部改动约 300 ms 回推到面板。
+  - **（4.13.63 提示）Kiro 1.1 的 Trust v2 迁移**：1.1.14 首次激活时会把 `mcp.json` 里的 `autoApprove`（用户级 / 工作区级 / powers 各一份）**一次性翻译**成 Kiro 新的权限规则（`capability:"mcp"` 的 allow 项，写进权限文件，入口是命令 `kiroAgent.openPermissionsUser`，并落一个 `.kiro/` 下的迁移标记），此后 Kiro 的批准判据以权限文件为准。mcp.json 的 `autoApprove` 字段仍被 Kiro 解析（schema 里还在、也仍会带进 MCP 连接配置），但**迁移之后再改 mcp.json 不一定改变实际批准行为**——遇到「改了免确认却没生效」，先看 Kiro 的权限文件。
 
 ## 稳健性
 
@@ -138,16 +141,19 @@ Kiro 视图标题栏最右侧有两枚命令图标（4.13.56）：**GitHub 标**
 
 | 靶文件 | 作用 |
 | --- | --- |
-| `extensions/kiro.kiro-agent/packages/kiro-ui-agent-chat/dist/style.css` | 模型选择器分组标题 / 卡片样式、弹层样式 |
-| `extensions/kiro.kiro-agent/packages/kiro-ui-agent-chat/dist/assets/mermaid-*.js` | 模型选择器组头渲染、Context Usage 弹层、聊天框 Effort 旁「Ctx」下拉 |
+| `extensions/kiro.kiro-agent/packages/*/dist/style.css` | 模型选择器分组标题 / 卡片样式、弹层样式、Ctx 下拉样式（逐份：CSS 只作用于同一个 webview 文档） |
+| `extensions/kiro.kiro-agent/packages/*/dist/assets/mermaid-*.js` | 模型选择器组头渲染、Context Usage 弹层、聊天框 Effort 旁「Ctx」下拉 |
 | `extensions/kiro.kiro-agent/dist/extension.js` | 模型刷新钩子（「通道 A」静默刷新）、`a2k:ctx` 挡位转发钩子 |
+
+> **1.1.14 起是「按内容认靶点、逐 package 覆盖」**：聊天界面被拆到 `kiro-ui-session-details`，承载模型选择器的同一个 chunk（同名 base `mermaid-GHXKKRXX`、不同 hash）在各 package 下各有一份，而且**各自独立压缩**。所以：① 用类名字面量 `chat-input-popup-option` 按**内容**挑 chunk，不按文件名（`mermaid-*` 优先，一份都不命中时回退扫该 package 的全部 `assets/*.js`）；② 每个 package 的 chunk 与它自己的 `style.css` 逐份处理，任一份漏掉就是「用户看到的那份没有补丁」。
 
 设计约束：
 
 - **可逆**：每段补丁带 `a2k` 标记；被替换的函数原文以 base64 随身携带，复原时精确回填。关闭代理或关闭 `api2kiroDual.groupHeaderStyle` 即移除。
-- **不写死压缩名**：Kiro 自动升级会改变压缩后的函数名，补丁按代码结构匹配、名字用正则捕获，全有或全无——任一靶点漂移则三处都不写，绝不留下半套。
+- **不写死压缩名，也不写死名字助手**：Kiro 自动升级会改变压缩后的函数名，补丁按代码结构匹配、名字用正则捕获，全有或全无——任一靶点漂移则三处都不写，绝不留下半套。1.1.14 的两个实例说明这条要贯彻到底：`useSessionConfig` 的反查原先把名字助手写死成 `a(`，而 session-details 那份是 `o(`；注入段的模板自带短局部名（`const k`）又撞上那份的 jsx 运行时名 `k` —— 两者都会让整条补丁被拒。
 - **升级自愈**：Kiro 升级覆盖了靶文件后，下次激活自动重新打补丁并提示重载一次。
 - **停用后的状态**：为避免每次重载都把钩子抹掉（kiro-agent 先于本扩展加载磁盘文件），窗口关闭时三份文件保持补丁态；此时没有本扩展运行，补丁对 Kiro 原生行为无可见影响。
+- **验证**：`node dev/verify-selector-patch.js [Kiro appRoot]` 用**真机安装目录的只读副本**跑结构命中 / 唯一性 / 改名守卫 / 幂等 / 往返复原 / 多 package 覆盖 / Ctx 下拉逐份「能注入且真能渲染」（当前 100+ 项全过，脚本自报数字为准）。
 
 ## 命令面板
 

@@ -74,7 +74,9 @@ const FALLBACK_CONTEXT_WINDOW = 200000;
  * window makes Kiro compact earlier and keeps the working context in a faster
  * latency band. Do not "correct" this comment to say Kiro ignores it — that claim
  * was made from confounded data and is false.
- * (Evidence: Kiro 1.0.437 bundle, `Oxo()` / `KJl()` in kiro.kiro-agent/dist/extension.js.)
+ * (Evidence: Kiro 1.0.437 bundle, `Oxo()` / `KJl()` in kiro.kiro-agent/dist/extension.js; re-checked on
+ * 1.1.14, which additionally adds a projection (`Pxo()`) of the pending tool results on top of the
+ * reported percentage before comparing against the same 80% / 95% thresholds.)
  *
  * Shared by all protocol converters: the bar means the same thing whichever
  * endpoint answered, and the heuristic already covers GPT-class names.

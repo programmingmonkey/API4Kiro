@@ -19,7 +19,7 @@
  *  (iii) TCP 远端地址必须是回环（127.0.0.0/8、`::1`、`::ffff:127.0.0.0/8`）。服务本就只绑 127.0.0.1，这一条是纵深。
  *
  * 合法调用方逐个核对（零可见影响）：
- *  - Kiro 的 kiro-agent 扩展：只读副本 `.verify-artifacts/kiro-copy-1.0.437/extensions/kiro.kiro-agent/dist/extension.js`
+ *  - Kiro 的 kiro-agent 扩展（只读副本核对；1.0.411 / 1.0.437 / 1.1.14 均为同一套 Node http 客户端，行为未变）：
  *    里 `getKrsConfig` / `getCpsConfig`（L16863）只喂给 Node 侧 `CodeWhispererStreaming`（L17886:C30710）与
  *    `CodeWhispererRuntimeClient`（L17886:C1111），运行时处理器 `NodeHttpHandler`（Node `http.request`，
  *    `Host` = `127.0.0.1:<port>`，无 Origin / Sec-Fetch-*）→ 放行。

@@ -18,9 +18,10 @@
  * CPS 报 272000、百分比按目录的 1050000 算（差 3.86 倍）→ 永远到不了 80% 阈值 → 上下文无界增长。
  * 详见 `modelStore.resolveWindowForGroup` 的注释。
  *
- * Kiro 侧机制（1.0.437 bundle 实证，`Oxo()` / `KJl()`）：SummarizationDetectionNode 读流式响应里的
- * `contextUsageEvent.contextUsagePercentage`，**>= 80% 触发摘要、>= 95% 触发即时截断**。
- * 所以「报多大的窗口，Kiro 就在多大的上下文处压缩」是成立的。
+ * Kiro 侧机制（1.0.437 定位、**1.1.14 复核**：`KJl()` = SummarizationDetectionNode、`Oxo()` = 阈值判定）：读流式响应里的
+ * `contextUsageEvent.contextUsagePercentage`，**>= 80% 触发摘要、>= 95% 触发即时截断**；1.1.14 起还会把
+ * 待回灌的工具结果按 `Pxo()` 折成百分比**叠加**到上报值上再判阈值（所以阈值实际是「本轮上报值 + 待回灌工具结果」）。
+ * 所以「报多大的窗口，Kiro 就在多大的上下文处压缩」是成立的——窗口最小的模型最先被压缩（Codex / GPT 系 272K ⇒ ≈217.6K tokens）。
  */
 
 /** 标准梯子（tokens）。 */
